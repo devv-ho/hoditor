@@ -1,10 +1,17 @@
-use std::io;
+#[derive(Default)]
+struct State;
 
-fn main() {
-    let mut a = String::new();
+#[derive(Debug)]
+enum Message {}
 
-    io::stdin().read_line(&mut a).expect("Failed to read");
+fn main() -> iced::Result {
+    iced::application("hoditor", update, view).run()
+}
 
-    let a: u32 = a.trim().parse().expect("it has to be a number");
-    println!("{a}");
+fn update(state: &mut State, message: Message) {
+    unimplemented!();
+}
+
+fn view(state: &State) -> iced::Element<Message> {
+    iced::widget::text("Hello World!").into()
 }
