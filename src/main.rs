@@ -3,11 +3,12 @@ use crossterm::{
     cursor, execute,
     terminal::{self, Clear, ClearType},
 };
-use std::env;
-use std::fs;
-use std::io::{Write, stdout};
-use std::sync::mpsc;
-use std::thread;
+use std::{
+    env, fs,
+    io::{Write, stdout},
+    sync::mpsc,
+    thread,
+};
 
 fn main() {
     execute!(stdout(), Clear(ClearType::All)).unwrap();
