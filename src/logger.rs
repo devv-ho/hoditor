@@ -18,8 +18,12 @@ impl Logger {
     const COLUMN_INTERVAL: &'static str = "    ";
 
     pub fn init() -> Result<(), Box<dyn Error>> {
+        // Use CARGO_MANIFEST_DIR when available (during cargo run),
+        // otherwise use current directory (when running compiled binary)
         let crate_path = std::env::var("CARGO_MANIFEST_DIR")
-            .with_context(|| format!("Failed to get crate path."))?;
+            .unwrap_or_else(|_| std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| ".".to_string()));
 
         let log_dir_abs_path = Path::new(&crate_path).join(Path::new(Self::LOG_DIR));
 

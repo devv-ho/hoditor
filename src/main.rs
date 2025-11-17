@@ -11,7 +11,7 @@ use std::{
     env,
     fs::File,
     io::prelude::*,
-    io::{BufReader, Write, stdout},
+    io::{BufReader, BufWriter, Write, stdout},
     time::Duration,
 };
 
@@ -90,8 +90,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let f = File::open(filename).expect("file not found");
 
-    let buf_reader = BufReader::new(f);
+    let buf_reader = BufReader::new(&f);
     let mut text_content: Vec<String> = buf_reader.lines().map(|line| line.unwrap()).collect();
+    if text_content.is_empty() {
+        text_content.push(String::new());
+    }
 
     let mut view_port_offset = 0;
     queue!(stdout, cursor::MoveTo(0, 0))?;
@@ -193,23 +196,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         cur_col -= 1;
                                     }
                                 } else if c == 'j' {
-                                    if cur_row + view_port_offset < text_content.len() as u16 - 1 {
-                                        if cur_row < debug_win_offset - 1 {
-                                            cur_row += 1;
+                                    if cur_row < debug_win_offset - 1 {
+                                        cur_row += 1;
 
-                                            if (text_content[(cur_row + view_port_offset) as usize]
+                                        if cur_row + view_port_offset < text_content.len() as u16
+                                            && (text_content[(cur_row + view_port_offset) as usize]
                                                 .len()
                                                 as u16)
                                                 < cur_col as u16
-                                            {
-                                                cur_col = text_content
-                                                    [(cur_row + view_port_offset) as usize]
-                                                    .len()
-                                                    as u16;
-                                            }
-                                        } else {
-                                            view_port_offset += 1;
-                                            render = true;
+                                        {
+                                            cur_col = text_content
+                                                [(cur_row + view_port_offset) as usize]
+                                                .len()
+                                                as u16;
                                         }
                                     } else if (view_port_offset as usize) < text_content.len() - 1 {
                                         view_port_offset += 1;
@@ -219,8 +218,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     if cur_row > 0 {
                                         cur_row -= 1;
 
-                                        if text_content[(cur_row + view_port_offset) as usize].len()
-                                            < cur_col as usize
+                                        if cur_row + view_port_offset < text_content.len() as u16
+                                            && text_content[(cur_row + view_port_offset) as usize]
+                                                .len()
+                                                < cur_col as usize
                                         {
                                             cur_col = text_content
                                                 [(cur_row + view_port_offset) as usize]
@@ -250,6 +251,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             _ => {}
                         },
+
                         Mode::Edit => {
                             render = true;
                             match key.code {
@@ -302,6 +304,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
 
+                                KeyCode::Tab => {
+                                    let rear = text_content[(cur_row + view_port_offset) as usize]
+                                        .split_off(cur_col.into());
+
+                                    text_content[(cur_row + view_port_offset) as usize] =
+                                        text_content[(cur_row + view_port_offset) as usize].clone()
+                                            + "    "
+                                            + rear.as_str();
+
+                                    cur_col += 4;
+                                }
+
                                 KeyCode::Esc => {
                                     Logger::log(format!(
                                         "[main] Change Mode. from {:?} to {:?}",
@@ -324,6 +338,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if render {
+            queue!(stdout, cursor::Hide)?;
             queue!(stdout, cursor::MoveTo(0, 0))?;
             for i in view_port_offset..(view_port_offset + win_size.1) {
                 queue!(
@@ -362,15 +377,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )?;
             }
 
-            match mode {
-                Mode::Cmd => {
-                    queue!(stdout, cursor::SetCursorStyle::SteadyBlock)?;
-                }
-                Mode::Edit => {
-                    queue!(stdout, cursor::SetCursorStyle::SteadyBar)?;
-                }
-            }
-
             queue!(
                 stdout,
                 cursor::MoveTo(col_start, debug_win_offset),
@@ -387,9 +393,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     cur_col
                 ))
             )?;
+            queue!(stdout, cursor::Show)?;
             stdout.flush()?;
         }
 
+        match mode {
+            Mode::Cmd => {
+                execute!(stdout, cursor::SetCursorStyle::SteadyBlock)?;
+            }
+            Mode::Edit => {
+                execute!(stdout, cursor::SetCursorStyle::SteadyBar)?;
+            }
+        }
         execute!(stdout, cursor::MoveTo(cur_col + col_start, cur_row as u16))?;
 
         if should_break {
@@ -403,6 +418,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ResetColor,
         crossterm::terminal::LeaveAlternateScreen
     )?;
+
+    // Write the modified content back to the file
+    let f_write = File::create(filename)?;
+    let mut buf_writer = BufWriter::new(f_write);
+    for line in &text_content {
+        buf_writer.write_all(line.as_bytes())?;
+        buf_writer.write_all(b"\n")?;
+    }
+    buf_writer.flush()?;
 
     Logger::log(String::from("[main] Terminate App"))?;
 
