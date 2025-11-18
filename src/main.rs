@@ -1,20 +1,25 @@
+use crate::buffer::Buffer;
+use crate::cursor::Cursor;
 use crate::highlighter::{Highlighter, style_to_crossterm_color};
 use crate::logger::Logger;
+
 use crossterm::{
-    cursor,
+    cursor as tui_cursor,
     event::{self, Event, KeyCode},
     execute, queue,
     style::{Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal,
 };
+use std::ops::ControlFlow;
 use std::{
     env,
     fs::File,
-    io::prelude::*,
-    io::{BufReader, BufWriter, Write, stdout},
+    io::{BufWriter, Write, stdout},
     time::Duration,
 };
 
+pub mod buffer;
+pub mod cursor;
 pub mod highlighter;
 pub mod logger;
 
@@ -65,16 +70,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     stdout.flush()?;
 
-    let debug_win_size = 5;
-    let debug_win_offset = win_size.1 - debug_win_size;
-    let debug_mode_idx = debug_win_offset + 1;
-    let debug_cursor_idx = debug_mode_idx + 1;
+    let debug_win_size = 5usize;
+    let text_win_size = (win_size.1 as usize) - debug_win_size;
 
     let col_start = (line_num_width + 2) as u16;
 
-    let (mut cur_row, mut cur_col) = (0, 0);
+    let mut cursor = Cursor::new();
 
-    execute!(stdout, cursor::MoveTo(col_start, 0))?;
+    execute!(stdout, tui_cursor::MoveTo(col_start, 0))?;
 
     let args: Vec<String> = env::args().collect();
 
@@ -86,37 +89,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.to_str())
         .unwrap_or("txt");
 
+    let mut buffer = Buffer::from(extension);
     let highlighter = Highlighter::new();
 
-    let f = File::open(filename).expect("file not found");
-
-    let buf_reader = BufReader::new(&f);
-    let mut text_content: Vec<String> = buf_reader.lines().map(|line| line.unwrap()).collect();
-    if text_content.is_empty() {
-        text_content.push(String::new());
-    }
-
-    let mut view_port_offset = 0;
-    queue!(stdout, cursor::MoveTo(0, 0))?;
-    for i in view_port_offset..(view_port_offset + win_size.1) {
+    let mut viewport_offset = 0usize;
+    queue!(stdout, tui_cursor::MoveTo(0, 0))?;
+    for i in viewport_offset..(viewport_offset + (win_size.1 as usize)) {
         queue!(
             stdout,
             terminal::Clear(terminal::ClearType::CurrentLine),
             Print(format!("{:>width$}", i, width = line_num_width as usize)),
-            cursor::MoveDown(1),
-            cursor::MoveToColumn(0),
+            tui_cursor::MoveDown(1),
+            tui_cursor::MoveToColumn(0),
         )?;
     }
 
-    queue!(stdout, cursor::MoveTo(col_start, 0))?;
-    for i in view_port_offset..(view_port_offset + win_size.1) {
-        if i as usize >= text_content.len() {
+    queue!(stdout, tui_cursor::MoveTo(col_start, 0))?;
+    for i in viewport_offset..(viewport_offset + (win_size.1 as usize)) {
+        if i >= buffer.len() {
             break;
         }
 
-        // Render line with syntax highlighting
-        let line = &text_content[i as usize];
-        let highlighted = highlighter.highlight_line(line, extension);
+        let highlighted = highlighter.highlight_line(buffer.get(i), extension);
 
         for (style, text) in highlighted {
             let (fg, bg) = style_to_crossterm_color(style);
@@ -131,43 +125,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         queue!(
             stdout,
             SetBackgroundColor(tokyonight_bg),
-            cursor::MoveDown(1),
-            cursor::MoveToColumn(col_start)
+            tui_cursor::MoveDown(1),
+            tui_cursor::MoveToColumn(col_start)
         )?;
     }
 
     match mode {
         Mode::Cmd => {
-            queue!(stdout, cursor::SetCursorStyle::SteadyBlock)?;
+            queue!(stdout, tui_cursor::SetCursorStyle::SteadyBlock)?;
         }
         Mode::Edit => {
-            queue!(stdout, cursor::SetCursorStyle::SteadyBar)?;
+            queue!(stdout, tui_cursor::SetCursorStyle::SteadyBar)?;
         }
     }
 
-    queue!(
-        stdout,
-        cursor::MoveTo(col_start, debug_win_offset),
-        Print("=".repeat((win_size.0 - col_start) as usize)),
-        cursor::MoveTo(col_start, debug_mode_idx),
-        Print(format!("Mode : {:?}", mode)),
-        cursor::MoveTo(col_start, debug_cursor_idx),
-        Print(format!(
-            "Cursor (terminal) : ({}, {})",
-            cur_row,
-            cur_col + col_start
-        )),
-        cursor::MoveDown(1),
-        cursor::MoveToColumn(col_start),
-        Print(format!(
-            "Cursor (file) : ({}, {})",
-            cur_row + view_port_offset,
-            cur_col
-        ))
-    )?;
     stdout.flush()?;
 
-    execute!(stdout, cursor::MoveTo(cur_col + col_start, cur_row as u16))?;
+    execute!(
+        stdout,
+        tui_cursor::MoveTo(cursor.row_u16() + col_start, cursor.col_u16())
+    )?;
 
     let mut should_break = false;
 
@@ -178,186 +155,139 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Process Event
             match event {
-                Event::Key(key) => {
-                    Logger::log(format!("[main] Key Read. {:?}", key.code))?;
-                    match mode {
-                        Mode::Cmd => match key.code {
-                            KeyCode::Char(c) => {
-                                if c == 'i' {
-                                    Logger::log(format!(
-                                        "[main] Change Mode. from {:?} to {:?}",
-                                        Mode::Cmd,
-                                        Mode::Edit,
-                                    ))?;
-
-                                    mode = Mode::Edit;
-                                } else if c == 'h' {
-                                    if cur_col > 0 {
-                                        cur_col -= 1;
-                                    }
-                                } else if c == 'j' {
-                                    if cur_row < debug_win_offset - 1 {
-                                        cur_row += 1;
-
-                                        if cur_row + view_port_offset < text_content.len() as u16
-                                            && (text_content[(cur_row + view_port_offset) as usize]
-                                                .len()
-                                                as u16)
-                                                < cur_col as u16
-                                        {
-                                            cur_col = text_content
-                                                [(cur_row + view_port_offset) as usize]
-                                                .len()
-                                                as u16;
-                                        }
-                                    } else if (view_port_offset as usize) < text_content.len() - 1 {
-                                        view_port_offset += 1;
-                                        render = true;
-                                    }
-                                } else if c == 'k' {
-                                    if cur_row > 0 {
-                                        cur_row -= 1;
-
-                                        if cur_row + view_port_offset < text_content.len() as u16
-                                            && text_content[(cur_row + view_port_offset) as usize]
-                                                .len()
-                                                < cur_col as usize
-                                        {
-                                            cur_col = text_content
-                                                [(cur_row + view_port_offset) as usize]
-                                                .len()
-                                                as u16;
-                                        }
-                                    } else if view_port_offset > 0 {
-                                        view_port_offset -= 1;
-                                        render = true;
-                                    }
-                                } else if c == 'l' {
-                                    if text_content[(cur_row + view_port_offset) as usize].len() > 0
-                                        && cur_col
-                                            < text_content[(cur_row + view_port_offset) as usize]
-                                                .len()
-                                                as u16
-                                    {
-                                        cur_col += 1;
+                Event::Key(key) => match mode {
+                    Mode::Cmd => match key.code {
+                        KeyCode::Char(c) => {
+                            if c == 'i' {
+                                mode = Mode::Edit;
+                            } else if c == 'h' {
+                                if cursor.col > 0 {
+                                    cursor.move_left(1);
+                                }
+                            } else if c == 'j' {
+                                if cursor.row < buffer.len() - 1 {
+                                    cursor.move_down(1);
+                                    if cursor.col > buffer.len_of(cursor.row) {
+                                        cursor.col = buffer.len_of(cursor.row);
                                     }
                                 }
+                            } else if c == 'k' {
+                                if cursor.row > 0 {
+                                    cursor.move_up(1);
+                                    if cursor.col > buffer.len_of(cursor.row) {
+                                        cursor.col = buffer.len_of(cursor.row);
+                                    }
+                                }
+                            } else if c == 'l' {
+                                if cursor.col < buffer.len_of(cursor.row) {
+                                    cursor.move_right(1);
+                                }
+                            }
+                        }
+
+                        KeyCode::Esc => {
+                            should_break = true;
+                        }
+
+                        _ => {}
+                    },
+
+                    Mode::Edit => {
+                        render = true;
+                        match key.code {
+                            KeyCode::Char(ch) => {
+                                buffer.insert_char(cursor.row, cursor.col, ch);
+                                cursor.move_right(1);
+                            }
+
+                            KeyCode::Backspace => {
+                                if cursor.col > 0 {
+                                    buffer.remove_char(cursor.row, cursor.col);
+                                    cursor.move_left(1);
+                                } else if cursor.row > 0 {
+                                    let cur_line = buffer.get(cursor.row).clone();
+
+                                    buffer.insert_string(cursor.row - 1, cur_line.len(), &cur_line);
+                                    buffer.remove(cursor.row);
+
+                                    cursor.move_up(1);
+                                    cursor.move_to_col(buffer.len_of(cursor.row));
+                                }
+                            }
+
+                            KeyCode::Enter => {
+                                let new_lined_string = buffer.get_string(
+                                    cursor.row,
+                                    cursor.col,
+                                    buffer.len_of(cursor.row) - cursor.col,
+                                );
+
+                                buffer.insert(cursor.row + 1, &new_lined_string);
+
+                                buffer.remove_string(
+                                    cursor.row,
+                                    cursor.col,
+                                    buffer.len_of(cursor.row) - cursor.col,
+                                );
+
+                                cursor.move_down(1);
+                                cursor.move_to_col(0);
+                            }
+
+                            KeyCode::Tab => {
+                                buffer.insert_string(cursor.row, cursor.col, &String::from("    "));
+
+                                cursor.move_right(4);
                             }
 
                             KeyCode::Esc => {
-                                Logger::log(String::from("[main] Break App Loop"))?;
-                                should_break = true;
+                                mode = Mode::Cmd;
                             }
 
                             _ => {}
-                        },
-
-                        Mode::Edit => {
-                            render = true;
-                            match key.code {
-                                KeyCode::Char(c) => {
-                                    text_content[(cur_row + view_port_offset) as usize]
-                                        .insert(cur_col as usize, c);
-                                    cur_col += 1;
-                                }
-
-                                KeyCode::Backspace => {
-                                    if cur_col > 0 {
-                                        text_content[(cur_row + view_port_offset) as usize]
-                                            .remove((cur_col - 1) as usize);
-                                        cur_col -= 1;
-                                    } else if (cur_row + view_port_offset) > 0 {
-                                        let upper_line = text_content
-                                            [(cur_row + view_port_offset) as usize - 1]
-                                            .clone();
-
-                                        let next_col = upper_line.len();
-
-                                        text_content[(cur_row + view_port_offset) as usize - 1] =
-                                            upper_line
-                                                + text_content
-                                                    [(cur_row + view_port_offset) as usize]
-                                                    .as_str();
-
-                                        text_content.remove((cur_row + view_port_offset) as usize);
-
-                                        cur_row -= 1;
-                                        cur_col = next_col as u16;
-                                    }
-                                }
-
-                                KeyCode::Enter => {
-                                    let new_line_text = text_content
-                                        [(cur_row + view_port_offset) as usize]
-                                        .split_off(cur_col as usize);
-                                    text_content.insert(
-                                        (cur_row + view_port_offset) as usize + 1,
-                                        new_line_text,
-                                    );
-
-                                    if cur_row < debug_win_offset - 1 {
-                                        cur_row += 1;
-                                        cur_col = 0;
-                                    } else {
-                                        view_port_offset += 1;
-                                        cur_col = 0;
-                                    }
-                                }
-
-                                KeyCode::Tab => {
-                                    let rear = text_content[(cur_row + view_port_offset) as usize]
-                                        .split_off(cur_col.into());
-
-                                    text_content[(cur_row + view_port_offset) as usize] =
-                                        text_content[(cur_row + view_port_offset) as usize].clone()
-                                            + "    "
-                                            + rear.as_str();
-
-                                    cur_col += 4;
-                                }
-
-                                KeyCode::Esc => {
-                                    Logger::log(format!(
-                                        "[main] Change Mode. from {:?} to {:?}",
-                                        Mode::Edit,
-                                        Mode::Cmd,
-                                    ))?;
-
-                                    mode = Mode::Cmd;
-                                }
-
-                                _ => {}
-                            }
                         }
                     }
-                }
+                },
                 _ => {
                     Logger::log(format!("[main] Unknown Event Read. {:?}", event))?;
                 }
             }
+
+            if cursor.row >= text_win_size {
+                viewport_offset = cursor.row - text_win_size + 1;
+                render = true;
+            }
         }
 
         if render {
-            queue!(stdout, cursor::Hide)?;
-            queue!(stdout, cursor::MoveTo(0, 0))?;
-            for i in view_port_offset..(view_port_offset + win_size.1) {
+            queue!(stdout, tui_cursor::Hide)?;
+
+            queue!(stdout, tui_cursor::MoveTo(0, 0))?;
+            for i in 0..(win_size.1 as usize) {
+                let line_idx = i + viewport_offset;
+
                 queue!(
                     stdout,
                     terminal::Clear(terminal::ClearType::CurrentLine),
-                    Print(format!("{:>width$}", i, width = line_num_width as usize)),
-                    cursor::MoveDown(1),
-                    cursor::MoveToColumn(0),
+                    Print(format!(
+                        "{:>width$}",
+                        line_idx,
+                        width = line_num_width as usize
+                    )),
+                    tui_cursor::MoveDown(1),
+                    tui_cursor::MoveToColumn(0),
                 )?;
             }
-            queue!(stdout, cursor::MoveTo(col_start, 0))?;
-            for i in view_port_offset..(view_port_offset + debug_win_offset) {
-                if i as usize >= text_content.len() {
+
+            queue!(stdout, tui_cursor::MoveTo(col_start, 0))?;
+            for i in 0..text_win_size {
+                let line_idx = i + viewport_offset;
+
+                if line_idx >= buffer.len() {
                     break;
                 }
 
-                // Render line with syntax highlighting
-                let line = &text_content[i as usize];
-                let highlighted = highlighter.highlight_line(line, extension);
+                let highlighted = highlighter.highlight_line(buffer.get(line_idx), extension);
 
                 for (style, text) in highlighted {
                     let (fg, bg) = style_to_crossterm_color(style);
@@ -372,40 +302,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 queue!(
                     stdout,
                     SetBackgroundColor(tokyonight_bg),
-                    cursor::MoveDown(1),
-                    cursor::MoveToColumn(col_start)
+                    tui_cursor::MoveDown(1),
+                    tui_cursor::MoveToColumn(col_start)
                 )?;
             }
 
-            queue!(
-                stdout,
-                cursor::MoveTo(col_start, debug_win_offset),
-                Print("=".repeat((win_size.0 - col_start) as usize)),
-                cursor::MoveTo(col_start, debug_mode_idx),
-                Print(format!("Mode : {:?}", mode)),
-                cursor::MoveTo(col_start, debug_cursor_idx),
-                Print(format!("Cursor : ({}, {})", cur_row, cur_col + col_start)),
-                cursor::MoveDown(1),
-                cursor::MoveToColumn(col_start),
-                Print(format!(
-                    "Cursor (file) : ({}, {})",
-                    cur_row + view_port_offset,
-                    cur_col
-                ))
-            )?;
-            queue!(stdout, cursor::Show)?;
+            queue!(stdout, tui_cursor::Show)?;
             stdout.flush()?;
         }
 
         match mode {
             Mode::Cmd => {
-                execute!(stdout, cursor::SetCursorStyle::SteadyBlock)?;
+                execute!(stdout, tui_cursor::SetCursorStyle::SteadyBlock)?;
             }
             Mode::Edit => {
-                execute!(stdout, cursor::SetCursorStyle::SteadyBar)?;
+                execute!(stdout, tui_cursor::SetCursorStyle::SteadyBar)?;
             }
         }
-        execute!(stdout, cursor::MoveTo(cur_col + col_start, cur_row as u16))?;
+
+        execute!(
+            stdout,
+            tui_cursor::MoveTo(
+                (cursor.col - viewport_offset) as u16 + col_start,
+                cursor.row as u16
+            )
+        )?;
 
         if should_break {
             break;
@@ -422,8 +343,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Write the modified content back to the file
     let f_write = File::create(filename)?;
     let mut buf_writer = BufWriter::new(f_write);
-    for line in &text_content {
-        buf_writer.write_all(line.as_bytes())?;
+    for i in 0..buffer.len() {
+        buf_writer.write_all(buffer.get(i).as_bytes())?;
         buf_writer.write_all(b"\n")?;
     }
     buf_writer.flush()?;
