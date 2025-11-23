@@ -1,55 +1,78 @@
-pub struct Cursor {
+#[derive(Debug, Clone, Copy)]
+pub enum CursorStyle {
+    Block,
+    Bar,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Position {
     pub row: usize,
     pub col: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Cursor {
+    pos: Position,
+    style: CursorStyle,
+}
+
 impl Cursor {
     pub fn new() -> Self {
-        Self { row: 0, col: 0 }
+        Self {
+            pos: Position { row: 0, col: 0 },
+            style: CursorStyle::Block,
+        }
     }
 
-    pub fn row_u16(&self) -> u16 {
-        self.row as u16
+    pub fn pos(&self) -> Position {
+        self.pos
     }
 
-    pub fn col_u16(&self) -> u16 {
-        self.col as u16
+    pub fn row(&self) -> usize {
+        self.pos.row
+    }
+
+    pub fn col(&self) -> usize {
+        self.pos.col
+    }
+
+    pub fn set_col(&mut self, col: usize) {
+        self.pos.col = col;
     }
 
     pub fn move_down(&mut self, n: usize) {
-        self.row += n;
+        self.pos.row += n;
     }
 
     pub fn move_up(&mut self, n: usize) {
-        if n > self.row {
-            panic!("row out-of-bound. [ row:{}, n:{} ]", self.row, n);
+        if n > self.pos.row {
+            panic!("row out-of-bound. [ row:{}, n:{} ]", self.pos.row, n);
         }
 
-        self.row -= n;
+        self.pos.row -= n;
     }
 
     pub fn move_left(&mut self, n: usize) {
-        if n > self.col {
-            panic!("row out-of-bound. [ row:{}, n:{} ]", self.row, n);
+        if n > self.pos.col {
+            panic!("row out-of-bound. [ row:{}, n:{} ]", self.pos.row, n);
         }
 
-        self.col -= n;
+        self.pos.col -= n;
     }
 
     pub fn move_right(&mut self, n: usize) {
-        self.col += n;
-    }
-
-    pub fn move_to(&mut self, row: usize, col: usize) {
-        self.row = row;
-        self.col = col;
-    }
-
-    pub fn move_to_row(&mut self, row: usize) {
-        self.row = row;
+        self.pos.col += n;
     }
 
     pub fn move_to_col(&mut self, col: usize) {
-        self.col = col;
+        self.pos.col = col;
+    }
+
+    pub fn set_style(&mut self, style: CursorStyle) {
+        self.style = style;
+    }
+
+    pub fn style(&self) -> CursorStyle {
+        self.style
     }
 }

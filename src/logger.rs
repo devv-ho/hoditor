@@ -31,14 +31,16 @@ impl Logger {
                 .with_context(|| format!("Failed to create directory. {:?}", &log_dir_abs_path))?;
         }
 
-        let log_name = format!("log-{}", Self::current_time("_"));
+        let log_name = format!("log");
         let log_path = log_dir_abs_path.join(Path::new(&log_name));
 
         let log_file: File = if !log_path.exists() {
             File::create(&log_path)
                 .with_context(|| format!("Failed to create log file. {:?}", &log_path))
         } else {
-            File::open(&log_path)
+            File::options()
+                .append(true)
+                .open(&log_path)
                 .with_context(|| format!("Failed to open log file. {:?}", &log_path))
         }?;
 
