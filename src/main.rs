@@ -19,8 +19,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Logger::log(String::from("[main] Start App"))?;
 
-    // Check arguments before initializing terminal
     let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        panic!(
+            "[main] Argument len should be 2. {{ len:{}, args:{:?}}}",
+            args.len(),
+            args
+        );
+    }
 
     let mut editor = Application::new(BufWriter::new(stdout()), &args[1])?;
 
@@ -29,15 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     editor.drop().unwrap();
 
     /*
-        // Write the modified content back to the file
-        let f_write = File::create(filename)?;
-        let mut buf_writer = BufWriter::new(f_write);
-        for i in 0..buffer.len() {
-            buf_writer.write_all(buffer.get(i).as_bytes())?;
-            buf_writer.write_all(b"\n")?;
-        }
-        buf_writer.flush()?;
-    */
+    // Write the modified content back to the file
+     */
     Logger::log(String::from("[main] Terminate App"))?;
 
     Ok(())

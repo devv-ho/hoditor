@@ -21,6 +21,7 @@ pub struct Renderer<W: Write> {
     writer: W,
     win_size: WindowSize,
     highlighter: Highlighter,
+    last_viewport_offset: usize,
 }
 
 impl<W: Write> Renderer<W> {
@@ -42,12 +43,14 @@ impl<W: Write> Renderer<W> {
             writer,
             win_size,
             highlighter,
+            last_viewport_offset: 0,
         }
     }
 
     pub fn init(&mut self, context: &Context) -> Result<(), Box<dyn Error>> {
         crossterm::terminal::enable_raw_mode()?;
         crossterm::execute!(self.writer, crossterm::terminal::EnterAlternateScreen)?;
+
         self.set_bg_color()?;
         self.render(context)?;
 
@@ -62,13 +65,34 @@ impl<W: Write> Renderer<W> {
             context.viewport.offset,
         ))?;
 
-        // Queue everything first (no immediate flush)
         queue!(self.writer, crossterm::cursor::Hide)?;
-        self.draw_lines(context)?;
+
+        let scroll_delta = context.viewport.offset as i32 - self.last_viewport_offset as i32;
+
+        if scroll_delta == 0 {
+            self.draw_lines(context)?;
+        } else if scroll_delta > 0 && scroll_delta < self.win_size.height as i32 {
+            let lines_to_scroll = scroll_delta as u16;
+            queue!(self.writer, terminal::ScrollUp(lines_to_scroll))?;
+
+            self.draw_lines_range(
+                context,
+                self.win_size.height - scroll_delta as usize,
+                self.win_size.height,
+            )?;
+        } else if scroll_delta < 0 && -scroll_delta < self.win_size.height as i32 {
+            let lines_to_scroll = (-scroll_delta) as u16;
+            queue!(self.writer, terminal::ScrollDown(lines_to_scroll))?;
+            self.draw_lines_range(context, 0, (-scroll_delta) as usize)?;
+        } else {
+            self.draw_lines(context)?;
+        }
+
+        self.last_viewport_offset = context.viewport.offset;
+
         self.draw_cursor(context)?;
         queue!(self.writer, crossterm::cursor::Show)?;
 
-        // Single flush at the end
         self.writer.flush()?;
 
         Ok(())
@@ -91,14 +115,32 @@ impl<W: Write> Renderer<W> {
     }
 
     fn draw_lines(&mut self, context: &Context) -> Result<(), Box<dyn Error>> {
+        self.draw_lines_range(context, 0, self.win_size.height)
+    }
+
+    fn draw_lines_range(
+        &mut self,
+        context: &Context,
+        screen_start: usize,
+        screen_end: usize,
+    ) -> Result<(), Box<dyn Error>> {
         let line_num_width = (context.buffer.len() - 1).ilog10() as usize + 1;
 
-        queue!(self.writer, crossterm::cursor::MoveTo(0, 0))?;
-        for i in context.viewport.offset..(context.viewport.offset + self.win_size.height) {
-            let mut line = format!("{line_num:>width$}", line_num = i, width = line_num_width);
+        queue!(
+            self.writer,
+            crossterm::cursor::MoveTo(0, screen_start as u16)
+        )?;
 
-            if i < context.buffer.len() {
-                line = line + &format!(" {}", context.buffer.get(i));
+        for screen_row in screen_start..screen_end {
+            let buffer_line = context.viewport.offset + screen_row;
+            let mut line = format!(
+                "{line_num:>width$}",
+                line_num = buffer_line,
+                width = line_num_width
+            );
+
+            if buffer_line < context.buffer.len() {
+                line = line + &format!(" {}", context.buffer.get(buffer_line));
             }
 
             let highlighted = self.highlighter.highlight_line(&line);

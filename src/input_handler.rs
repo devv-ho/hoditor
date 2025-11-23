@@ -1,25 +1,25 @@
 use crate::{app::Context, cursor::CursorStyle, state::Mode};
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+};
 
 use crossterm::event::{Event, KeyCode, KeyEvent};
 
 pub struct EventHandler;
 impl EventHandler {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn handle(&self, event: Event, mode: Mode) -> Box<dyn Executable> {
+    pub fn handle(event: Event, mode: Mode) -> Box<dyn Executable> {
         let Event::Key(key) = event else {
             return Box::new(DoNothing);
         };
 
         match mode {
-            Mode::Edit => self.handle_edit_event(key),
-            Mode::Cmd => self.handle_cmd_event(key),
+            Mode::Edit => Self::handle_edit_event(key),
+            Mode::Cmd => Self::handle_cmd_event(key),
         }
     }
 
-    pub fn handle_edit_event(&self, key: KeyEvent) -> Box<dyn Executable> {
+    pub fn handle_edit_event(key: KeyEvent) -> Box<dyn Executable> {
         match key.code {
             KeyCode::Char(ch) => Box::new(InsertChar { ch }),
 
@@ -35,7 +35,7 @@ impl EventHandler {
         }
     }
 
-    fn handle_cmd_event(&self, key: KeyEvent) -> Box<dyn Executable> {
+    fn handle_cmd_event(key: KeyEvent) -> Box<dyn Executable> {
         match key.code {
             KeyCode::Char(ch) => match ch {
                 'h' => Box::new(MoveCursorLeft),
@@ -48,6 +48,8 @@ impl EventHandler {
 
                 'i' => Box::new(ChangeMode { mode: Mode::Edit }),
 
+                'w' => Box::new(Save),
+
                 _ => Box::new(DoNothing),
             },
 
@@ -56,11 +58,6 @@ impl EventHandler {
             _ => Box::new(DoNothing),
         }
     }
-}
-
-pub struct Viewport {
-    pub height: usize,
-    pub offset: usize,
 }
 
 pub trait Executable: std::fmt::Debug {
@@ -228,5 +225,21 @@ struct TerminateApp;
 impl Executable for TerminateApp {
     fn execute(&self, context: &mut Context) {
         context.app_state.terminate_app();
+    }
+}
+
+#[derive(Debug)]
+struct Save;
+impl Executable for Save {
+    fn execute(&self, context: &mut Context) {
+        let f_write = File::create(&context.file_name).unwrap();
+        let mut buf_writer = BufWriter::new(f_write);
+        for i in 0..context.buffer.len() {
+            buf_writer
+                .write_all(context.buffer.get(i).as_bytes())
+                .unwrap();
+            buf_writer.write_all(b"\n").unwrap();
+        }
+        buf_writer.flush().unwrap();
     }
 }

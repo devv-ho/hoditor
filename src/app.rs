@@ -1,15 +1,14 @@
 use crate::{
-    buffer::Buffer, cursor::Cursor, input_handler::EventHandler, input_handler::Viewport,
-    renderer::Renderer, state::State,
+    buffer::Buffer, cursor::Cursor, input_handler::EventHandler, renderer::Renderer, state::State,
 };
 use std::{error::Error, io::Write};
 
 pub struct Application<W: Write> {
+    file_name: String,
     buffer: Buffer,
     app_state: State,
     cursor: Cursor,
     viewport: Viewport,
-    input_handler: EventHandler,
     renderer: Renderer<W>,
 }
 
@@ -27,14 +26,12 @@ impl<W: Write> Application<W> {
             offset: 0,
         };
 
-        let input_handler = EventHandler::new();
-
         Ok(Self {
+            file_name: file_name.to_string(),
             buffer,
             app_state,
             cursor,
             viewport,
-            input_handler,
             renderer,
         })
     }
@@ -45,6 +42,7 @@ impl<W: Write> Application<W> {
             buffer: &mut self.buffer,
             app_state: &mut self.app_state,
             viewport: &mut self.viewport,
+            file_name: &mut self.file_name,
         };
 
         self.renderer.init(&app_context)?;
@@ -57,18 +55,19 @@ impl<W: Write> Application<W> {
             if crossterm::event::poll(std::time::Duration::from_millis(10)).unwrap() {
                 let event = crossterm::event::read().unwrap();
 
-                let command = self.input_handler.handle(event, self.app_state.mode());
+                let command = EventHandler::handle(event, self.app_state.mode());
 
                 let mut app_context = Context {
                     cursor: &mut self.cursor,
                     buffer: &mut self.buffer,
                     app_state: &mut self.app_state,
                     viewport: &mut self.viewport,
+                    file_name: &mut self.file_name,
                 };
 
                 command.execute(&mut app_context);
 
-                self.renderer.render(&app_context)?;
+                self.renderer.render(&app_context).unwrap();
             }
 
             if self.app_state.should_terminate() {
@@ -91,4 +90,10 @@ pub struct Context<'a> {
     pub buffer: &'a mut Buffer,
     pub app_state: &'a mut State,
     pub viewport: &'a mut Viewport,
+    pub file_name: &'a mut String,
+}
+
+pub struct Viewport {
+    pub height: usize,
+    pub offset: usize,
 }
