@@ -16,6 +16,7 @@ pub struct Cursor {
     style: CursorStyle,
 }
 
+pub const SCROLL_HEIGHT: usize = 15;
 impl Cursor {
     pub fn new() -> Self {
         Self {
@@ -36,7 +37,16 @@ impl Cursor {
         self.pos.col
     }
 
+    pub fn set_row(&mut self, row: usize) {
+        self.pos.row = row;
+    }
+
     pub fn set_col(&mut self, col: usize) {
+        self.pos.col = col;
+    }
+
+    pub fn move_to(&mut self, row: usize, col: usize) {
+        self.pos.row = row;
         self.pos.col = col;
     }
 

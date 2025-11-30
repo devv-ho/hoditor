@@ -1,245 +1,352 @@
-use crate::{app::Context, cursor::CursorStyle, state::Mode};
+use crate::{
+    app::Context,
+    command_dispatcher::CmdDispatcher,
+    cursor::{CursorStyle, SCROLL_HEIGHT},
+    logger::Logger,
+    renderer::STATUS_BAR_HEIGHT,
+    state::Mode,
+};
 use std::{
+    env,
     fs::File,
     io::{BufWriter, Write},
+    os::unix::process::CommandExt,
+    process::Command as ProcessCommand,
 };
 
-use crossterm::event::{Event, KeyCode, KeyEvent};
+use crossterm::event::{Event, KeyCode, MouseEventKind};
 
-pub struct EventHandler;
+pub struct EventHandler {
+    dispatcher: CmdDispatcher,
+}
+
 impl EventHandler {
-    pub fn handle(event: Event, mode: Mode) -> Box<dyn Executable> {
-        let Event::Key(key) = event else {
-            return Box::new(DoNothing);
-        };
+    pub fn new() -> Self {
+        let mut dispatcher = CmdDispatcher::new();
+        dispatcher.register("h", Command::MoveCursor { dx: -1, dy: 0 });
+        dispatcher.register("j", Command::MoveCursor { dx: 0, dy: 1 });
+        dispatcher.register("k", Command::MoveCursor { dx: 0, dy: -1 });
+        dispatcher.register("l", Command::MoveCursor { dx: 1, dy: 0 });
+        dispatcher.register("gg", Command::MoveCursorSOF);
+        dispatcher.register("G", Command::MoveCursorEOF);
+        dispatcher.register("i", Command::ChangeMode(Mode::Edit));
+        dispatcher.register("w", Command::Save);
+        dispatcher.register("W", Command::SaveAndRestart);
+        dispatcher.register("o", Command::InsertEmptyLineBelow);
+        dispatcher.register("O", Command::InsertEmptyLineAbove);
+        dispatcher.register("A", Command::MoveCursorToLineEnd);
+        dispatcher.register(":", Command::ChangeMode(Mode::Cmd));
+
+        Self { dispatcher }
+    }
+
+    pub fn handle(&mut self, event: Event, mode: Mode) -> Command {
+        Logger::log(format!("Event: {:?}", event)).unwrap();
 
         match mode {
-            Mode::Edit => Self::handle_edit_event(key),
-            Mode::Cmd => Self::handle_cmd_event(key),
+            Mode::Edit => Self::handle_edit_event(event),
+            Mode::Normal => self.handle_normal_event(event),
+            Mode::Cmd => Self::handle_cmd_event(event),
         }
     }
 
-    pub fn handle_edit_event(key: KeyEvent) -> Box<dyn Executable> {
-        match key.code {
-            KeyCode::Char(ch) => Box::new(InsertChar { ch }),
-
-            KeyCode::Backspace => Box::new(RemoveChar),
-
-            KeyCode::Enter => Box::new(InsertNewLine),
-
-            KeyCode::Tab => Box::new(InsertTab),
-
-            KeyCode::Esc => Box::new(ChangeMode { mode: Mode::Cmd }),
-
-            _ => Box::new(DoNothing),
-        }
-    }
-
-    fn handle_cmd_event(key: KeyEvent) -> Box<dyn Executable> {
-        match key.code {
-            KeyCode::Char(ch) => match ch {
-                'h' => Box::new(MoveCursorLeft),
-
-                'j' => Box::new(MoveCursorDown),
-
-                'k' => Box::new(MoveCursorUp),
-
-                'l' => Box::new(MoveCursorRight),
-
-                'i' => Box::new(ChangeMode { mode: Mode::Edit }),
-
-                'w' => Box::new(Save),
-
-                _ => Box::new(DoNothing),
+    fn handle_edit_event(event: Event) -> Command {
+        match event {
+            Event::Key(key) => match key.code {
+                KeyCode::Char(ch) => Command::InsertChar(ch),
+                KeyCode::Backspace => Command::RemoveChar,
+                KeyCode::Enter => Command::InsertNewLine,
+                KeyCode::Tab => Command::InsertTab,
+                KeyCode::Esc => Command::ChangeMode(Mode::Normal),
+                KeyCode::Right => Command::MoveCursor { dx: 1, dy: 0 },
+                KeyCode::Left => Command::MoveCursor { dx: -1, dy: 0 },
+                KeyCode::Up => Command::MoveCursor { dx: 0, dy: -1 },
+                KeyCode::Down => Command::MoveCursor { dx: 0, dy: 1 },
+                _ => Command::DoNothing,
             },
+            Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::ScrollUp => Command::ScrollUp,
+                MouseEventKind::ScrollDown => Command::ScrollDown,
+                MouseEventKind::Down(_) => Command::MoveCursorToMouse {
+                    row: mouse.row as usize,
+                    col: mouse.column as usize,
+                },
+                _ => Command::DoNothing,
+            },
+            _ => Command::DoNothing,
+        }
+    }
 
-            KeyCode::Esc => Box::new(TerminateApp),
+    fn handle_normal_event(&mut self, event: Event) -> Command {
+        match event {
+            Event::Key(key) => match key.code {
+                KeyCode::Char(ch) => {
+                    self.dispatcher.push(ch);
+                    self.dispatcher.get().unwrap_or(Command::DoNothing)
+                }
+                KeyCode::Esc => Command::TerminateApp,
+                _ => Command::DoNothing,
+            },
+            Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::ScrollUp => Command::ScrollUp,
+                MouseEventKind::ScrollDown => Command::ScrollDown,
+                MouseEventKind::Down(_) => Command::MoveCursorToMouse {
+                    row: mouse.row as usize,
+                    col: mouse.column as usize,
+                },
+                _ => Command::DoNothing,
+            },
+            _ => Command::DoNothing,
+        }
+    }
 
-            _ => Box::new(DoNothing),
+    fn handle_cmd_event(event: Event) -> Command {
+        match event {
+            Event::Key(key) => match key.code {
+                KeyCode::Esc => Command::ChangeMode(Mode::Normal),
+                _ => Command::DoNothing,
+            },
+            _ => Command::DoNothing,
         }
     }
 }
 
-pub trait Executable: std::fmt::Debug {
-    fn execute(&self, context: &mut Context);
+#[derive(Debug, Clone)]
+pub enum Command {
+    DoNothing,
+    MoveCursor { dx: i32, dy: i32 },
+    MoveCursorSOF,
+    MoveCursorEOF,
+    InsertChar(char),
+    InsertTab,
+    RemoveChar,
+    InsertNewLine,
+    InsertEmptyLineBelow,
+    InsertEmptyLineAbove,
+    MoveCursorToLineEnd,
+    MoveCursorToMouse { row: usize, col: usize },
+    ScrollUp,
+    ScrollDown,
+    ChangeMode(Mode),
+    TerminateApp,
+    Save,
+    SaveAndRestart,
 }
 
-#[derive(Debug)]
-struct DoNothing;
-impl Executable for DoNothing {
-    fn execute(&self, _: &mut Context) {}
-}
+impl Command {
+    pub fn execute(&self, context: &mut Option<Context>) {
+        if let Some(context) = context {
+            match self {
+                Command::DoNothing => {}
+                Command::MoveCursor { dx, dy } => {
+                    let cursor = &mut context.cursor;
+                    let buffer = &mut context.buffer;
 
-#[derive(Debug)]
-struct MoveCursorLeft;
-impl Executable for MoveCursorLeft {
-    fn execute(&self, context: &mut Context) {
-        let cursor = &mut context.cursor;
+                    // Handle horizontal movement
+                    if *dx < 0 && cursor.col() > 0 {
+                        cursor.move_left(dx.abs() as usize);
+                    } else if *dx > 0 && cursor.col() < buffer.len_of(cursor.row()) {
+                        cursor.move_right(*dx as usize);
+                    }
 
-        if cursor.col() > 0 {
-            cursor.move_left(1);
-        }
-    }
-}
+                    // Handle vertical movement
+                    if *dy < 0 && cursor.row() > 0 {
+                        cursor.move_up(dy.abs() as usize);
+                        if cursor.col() > buffer.len_of(cursor.row()) {
+                            cursor.set_col(buffer.len_of(cursor.row()));
+                        }
+                        if cursor.row() < context.viewport.offset + SCROLL_HEIGHT
+                            && context.viewport.offset > 0
+                        {
+                            context.viewport.offset -= 1;
+                        }
+                    } else if *dy > 0 && cursor.row() < buffer.len() - 1 {
+                        cursor.move_down(*dy as usize);
+                        if cursor.col() > buffer.len_of(cursor.row()) {
+                            cursor.set_col(buffer.len_of(cursor.row()));
+                        }
+                        if cursor.row()
+                            >= context.viewport.offset + context.viewport.height - SCROLL_HEIGHT
+                            && context.viewport.offset + context.viewport.height < buffer.len()
+                        {
+                            context.viewport.offset += 1;
+                        }
+                    }
+                }
+                Command::MoveCursorSOF => {
+                    context.viewport.offset = 0;
+                    context.cursor.set_row(0);
+                }
+                Command::MoveCursorEOF => {
+                    context.viewport.offset = context.buffer.len() - context.viewport.height;
+                    context.cursor.set_row(context.buffer.len() - 1);
+                }
+                Command::InsertChar(ch) => {
+                    context
+                        .buffer
+                        .insert_char(context.cursor.row(), context.cursor.col(), *ch);
+                    context.cursor.move_right(1);
+                }
+                Command::InsertTab => {
+                    context.buffer.insert_string(
+                        context.cursor.row(),
+                        context.cursor.col(),
+                        &String::from("    "),
+                    );
+                    context.cursor.move_right(4);
+                }
+                Command::RemoveChar => {
+                    let cursor = &mut context.cursor;
+                    let buffer = &mut context.buffer;
 
-#[derive(Debug)]
-struct MoveCursorRight;
-impl Executable for MoveCursorRight {
-    fn execute(&self, context: &mut Context) {
-        let cursor = &mut context.cursor;
-        let buf = &mut context.buffer;
+                    if cursor.col() > 0 {
+                        buffer.remove_char(cursor.row(), cursor.col() - 1);
+                        cursor.move_left(1);
+                    } else if cursor.row() > 0 {
+                        let next_col = buffer.len_of(cursor.row() - 1);
+                        let cur_line = buffer.get(cursor.row()).clone();
+                        buffer.insert_string(cursor.row() - 1, next_col, &cur_line);
+                        buffer.remove(cursor.row());
+                        cursor.move_up(1);
+                        cursor.move_to_col(next_col);
+                    }
+                }
+                Command::InsertNewLine => {
+                    let cursor = &mut context.cursor;
+                    let buffer = &mut context.buffer;
 
-        if cursor.col() < buf.len_of(cursor.row()) {
-            cursor.move_right(1);
-        }
-    }
-}
+                    let rear = buffer.get_string(
+                        cursor.row(),
+                        cursor.col(),
+                        buffer.len_of(cursor.row()) - cursor.col(),
+                    );
+                    buffer.remove_string(cursor.row(), cursor.col(), rear.len());
+                    buffer.insert(cursor.row() + 1, &rear);
+                    cursor.move_down(1);
+                    cursor.move_to_col(0);
+                }
+                Command::InsertEmptyLineBelow => {
+                    context
+                        .buffer
+                        .insert(context.cursor.row() + 1, &String::new());
+                    context.cursor.move_down(1);
+                    context.cursor.move_to_col(0);
+                    context.app_state.set_mode(Mode::Edit);
+                    context.cursor.set_style(CursorStyle::Bar);
+                }
+                Command::InsertEmptyLineAbove => {
+                    context.buffer.insert(context.cursor.row(), &String::new());
+                    context.cursor.move_to_col(0);
+                    context.app_state.set_mode(Mode::Edit);
+                    context.cursor.set_style(CursorStyle::Bar);
+                }
+                Command::MoveCursorToLineEnd => {
+                    context
+                        .cursor
+                        .move_to_col(context.buffer.len_of(context.cursor.row()));
+                    context.app_state.set_mode(Mode::Edit);
+                    context.cursor.set_style(CursorStyle::Bar);
+                }
+                Command::MoveCursorToMouse { row, col } => {
+                    let line_num_len = (context.buffer.len() - 1).ilog10() as usize + 1;
 
-#[derive(Debug)]
-struct MoveCursorUp;
-impl Executable for MoveCursorUp {
-    fn execute(&self, context: &mut Context) {
-        let cursor = &mut context.cursor;
-        let buf = &mut context.buffer;
+                    let actual_col = if *col <= line_num_len {
+                        0
+                    } else if *col - line_num_len - 1
+                        > context.buffer.len_of(*row + context.viewport.offset)
+                    {
+                        context.buffer.len_of(*row + context.viewport.offset)
+                    } else {
+                        *col - line_num_len - 1
+                    };
 
-        if cursor.row() > 0 {
-            cursor.move_up(1);
-            if cursor.col() > buf.len_of(cursor.row()) {
-                cursor.set_col(buf.len_of(cursor.row()));
+                    context
+                        .cursor
+                        .move_to(*row + context.viewport.offset, actual_col);
+                }
+                Command::ScrollUp => {
+                    if context.viewport.offset > 0 {
+                        context.viewport.offset -= 1;
+                        context.cursor.move_up(1);
+                        if context.cursor.col() > context.buffer.len_of(context.cursor.row()) {
+                            context
+                                .cursor
+                                .move_to_col(context.buffer.len_of(context.cursor.row()));
+                        }
+                    }
+                }
+                Command::ScrollDown => {
+                    if context.viewport.offset + context.viewport.height < context.buffer.len() {
+                        context.viewport.offset += 1;
+                        context.cursor.move_down(1);
+                    }
+                    if context.cursor.col() > context.buffer.len_of(context.cursor.row()) {
+                        context
+                            .cursor
+                            .move_to_col(context.buffer.len_of(context.cursor.row()));
+                    }
+                }
+                Command::ChangeMode(mode) => {
+                    context.app_state.set_mode(*mode);
+                    match mode {
+                        Mode::Cmd | Mode::Normal => context.cursor.set_style(CursorStyle::Block),
+                        Mode::Edit => context.cursor.set_style(CursorStyle::Bar),
+                    }
+                }
+                Command::TerminateApp => {
+                    context.app_state.terminate_app();
+                }
+                Command::Save => {
+                    let f_write = File::create(&context.file_name).unwrap();
+                    let mut buf_writer = BufWriter::new(f_write);
+                    for i in 0..context.buffer.len() {
+                        buf_writer
+                            .write_all(context.buffer.get(i).as_bytes())
+                            .unwrap();
+                        buf_writer.write_all(b"\n").unwrap();
+                    }
+                    buf_writer.flush().unwrap();
+                }
+                Command::SaveAndRestart => {
+                    // Save the file first
+                    let f_write = File::create(&context.file_name).unwrap();
+                    let mut buf_writer = BufWriter::new(f_write);
+                    for i in 0..context.buffer.len() {
+                        buf_writer
+                            .write_all(context.buffer.get(i).as_bytes())
+                            .unwrap();
+                        buf_writer.write_all(b"\n").unwrap();
+                    }
+                    buf_writer.flush().unwrap();
+
+                    let _ = crossterm::terminal::disable_raw_mode();
+                    let _ = crossterm::execute!(
+                        std::io::stdout(),
+                        crossterm::event::DisableMouseCapture,
+                        crossterm::terminal::LeaveAlternateScreen
+                    );
+
+                    let build_status = ProcessCommand::new("cargo")
+                        .args(["build"])
+                        .status()
+                        .expect("Failed to run cargo build");
+
+                    if !build_status.success() {
+                        println!("Build failed! Press Enter to return to editor...");
+                        let _ = std::io::stdin().read_line(&mut String::new());
+
+                        let args: Vec<String> = env::args().collect();
+                        let exe = &args[0];
+                        let err = ProcessCommand::new(exe).args(&args[1..]).exec();
+                        panic!("Failed to restart: {}", err);
+                    }
+
+                    let args: Vec<String> = env::args().collect();
+                    let exe = &args[0];
+                    let err = ProcessCommand::new(exe).args(&args[1..]).exec();
+                    panic!("Failed to restart: {}", err);
+                }
             }
         }
-
-        if cursor.row() < context.viewport.offset {
-            context.viewport.offset -= 1;
-        }
-    }
-}
-
-#[derive(Debug)]
-struct MoveCursorDown;
-impl Executable for MoveCursorDown {
-    fn execute(&self, context: &mut Context) {
-        let cursor = &mut context.cursor;
-        let buf = &mut context.buffer;
-
-        if cursor.row() < buf.len() - 1 {
-            cursor.move_down(1);
-            if cursor.col() > buf.len_of(cursor.row()) {
-                cursor.set_col(buf.len_of(cursor.row()));
-            }
-        }
-
-        if cursor.row() >= context.viewport.offset + context.viewport.height {
-            context.viewport.offset += 1;
-        }
-    }
-}
-
-#[derive(Debug)]
-struct InsertChar {
-    ch: char,
-}
-impl Executable for InsertChar {
-    fn execute(&self, context: &mut Context) {
-        let cursor = &mut context.cursor;
-        let buf = &mut context.buffer;
-
-        buf.insert_char(cursor.row(), cursor.col(), self.ch);
-        cursor.move_right(1);
-    }
-}
-
-#[derive(Debug)]
-struct InsertTab;
-impl Executable for InsertTab {
-    fn execute(&self, context: &mut Context) {
-        let cursor = &mut context.cursor;
-        let buf = &mut context.buffer;
-
-        buf.insert_string(cursor.row(), cursor.col(), &String::from("    "));
-        cursor.move_right(4);
-    }
-}
-
-#[derive(Debug)]
-struct RemoveChar;
-impl Executable for RemoveChar {
-    fn execute(&self, context: &mut Context) {
-        let cursor = &mut context.cursor;
-        let buf = &mut context.buffer;
-
-        if cursor.col() > 0 {
-            buf.remove_char(cursor.row(), cursor.col() - 1);
-
-            cursor.move_left(1);
-        } else if cursor.row() > 0 {
-            let next_col = buf.len_of(cursor.row() - 1);
-            let cur_line = buf.get(cursor.row()).clone();
-
-            buf.insert_string(cursor.row() - 1, next_col, &cur_line);
-            buf.remove(cursor.row());
-
-            cursor.move_up(1);
-            cursor.move_to_col(next_col);
-        }
-    }
-}
-
-#[derive(Debug)]
-struct InsertNewLine;
-impl Executable for InsertNewLine {
-    fn execute(&self, context: &mut Context) {
-        let cursor = &mut context.cursor;
-        let buf = &mut context.buffer;
-
-        let rear = buf.get_string(
-            cursor.row(),
-            cursor.col(),
-            buf.len_of(cursor.row()) - cursor.col(),
-        );
-
-        buf.remove_string(cursor.row(), cursor.col(), rear.len());
-        buf.insert(cursor.row() + 1, &rear);
-        cursor.move_down(1);
-        cursor.move_to_col(0);
-    }
-}
-
-#[derive(Debug)]
-struct ChangeMode {
-    mode: Mode,
-}
-impl Executable for ChangeMode {
-    fn execute(&self, context: &mut Context) {
-        context.app_state.set_mode(self.mode);
-
-        match self.mode {
-            Mode::Cmd => context.cursor.set_style(CursorStyle::Block),
-            Mode::Edit => context.cursor.set_style(CursorStyle::Bar),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct TerminateApp;
-impl Executable for TerminateApp {
-    fn execute(&self, context: &mut Context) {
-        context.app_state.terminate_app();
-    }
-}
-
-#[derive(Debug)]
-struct Save;
-impl Executable for Save {
-    fn execute(&self, context: &mut Context) {
-        let f_write = File::create(&context.file_name).unwrap();
-        let mut buf_writer = BufWriter::new(f_write);
-        for i in 0..context.buffer.len() {
-            buf_writer
-                .write_all(context.buffer.get(i).as_bytes())
-                .unwrap();
-            buf_writer.write_all(b"\n").unwrap();
-        }
-        buf_writer.flush().unwrap();
     }
 }

@@ -1,5 +1,6 @@
 mod app;
 mod buffer;
+mod command_dispatcher;
 mod cursor;
 mod highlighter;
 mod input_handler;

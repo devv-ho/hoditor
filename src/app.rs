@@ -1,5 +1,9 @@
 use crate::{
-    buffer::Buffer, cursor::Cursor, input_handler::EventHandler, renderer::Renderer, state::State,
+    buffer::Buffer,
+    cursor::Cursor,
+    input_handler::EventHandler,
+    renderer::{Renderer, STATUS_BAR_HEIGHT},
+    state::State,
 };
 use std::{error::Error, io::Write};
 
@@ -10,6 +14,7 @@ pub struct Application<W: Write> {
     cursor: Cursor,
     viewport: Viewport,
     renderer: Renderer<W>,
+    event_handler: EventHandler,
 }
 
 impl<W: Write> Application<W> {
@@ -22,7 +27,7 @@ impl<W: Write> Application<W> {
 
         let (_, win_height) = crossterm::terminal::size()?;
         let viewport = Viewport {
-            height: win_height as usize,
+            height: (win_height as usize - STATUS_BAR_HEIGHT),
             offset: 0,
         };
 
@@ -33,6 +38,7 @@ impl<W: Write> Application<W> {
             cursor,
             viewport,
             renderer,
+            event_handler: EventHandler::new(),
         })
     }
 
@@ -54,20 +60,22 @@ impl<W: Write> Application<W> {
         loop {
             if crossterm::event::poll(std::time::Duration::from_millis(10)).unwrap() {
                 let event = crossterm::event::read().unwrap();
+                let mode = self.app_state.mode();
 
-                let command = EventHandler::handle(event, self.app_state.mode());
-
-                let mut app_context = Context {
+                let mut app_context = Some(Context {
                     cursor: &mut self.cursor,
                     buffer: &mut self.buffer,
                     app_state: &mut self.app_state,
                     viewport: &mut self.viewport,
                     file_name: &mut self.file_name,
-                };
+                });
 
-                command.execute(&mut app_context);
+                let cmd = self.event_handler.handle(event, mode);
+                cmd.execute(&mut app_context);
 
-                self.renderer.render(&app_context).unwrap();
+                if let Some(ref ctx) = app_context {
+                    self.renderer.render(ctx).unwrap();
+                }
             }
 
             if self.app_state.should_terminate() {

@@ -6,7 +6,7 @@ pub struct State {
 impl State {
     pub fn new() -> Self {
         Self {
-            mode: Mode::Cmd,
+            mode: Mode::Normal,
             should_terminate: false,
         }
     }
@@ -30,6 +30,7 @@ impl State {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Mode {
+    Normal,
     Cmd,
     Edit,
 }

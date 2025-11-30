@@ -20,10 +20,12 @@ pub struct WindowSize {
 pub struct Renderer<W: Write> {
     writer: W,
     win_size: WindowSize,
+    line_num_width: usize,
     highlighter: Highlighter,
     last_viewport_offset: usize,
 }
 
+pub const STATUS_BAR_HEIGHT: usize = 2usize;
 impl<W: Write> Renderer<W> {
     pub fn new(writer: W, file_name: &str) -> Self {
         let win_size = crossterm::terminal::size().unwrap();
@@ -42,6 +44,7 @@ impl<W: Write> Renderer<W> {
         Self {
             writer,
             win_size,
+            line_num_width: 0,
             highlighter,
             last_viewport_offset: 0,
         }
@@ -49,38 +52,34 @@ impl<W: Write> Renderer<W> {
 
     pub fn init(&mut self, context: &Context) -> Result<(), Box<dyn Error>> {
         crossterm::terminal::enable_raw_mode()?;
+        crossterm::execute!(self.writer, crossterm::event::EnableMouseCapture)?;
         crossterm::execute!(self.writer, crossterm::terminal::EnterAlternateScreen)?;
 
         self.set_bg_color()?;
+        self.line_num_width = (context.buffer.len() - 1).ilog10() as usize + 1;
+
         self.render(context)?;
 
         Ok(())
     }
 
     pub fn render(&mut self, context: &Context) -> Result<(), Box<dyn Error>> {
-        Logger::log(format!(
-            "{:?} / {} / {}",
-            context.cursor.pos(),
-            context.buffer.get(context.cursor.row()),
-            context.viewport.offset,
-        ))?;
-
         queue!(self.writer, crossterm::cursor::Hide)?;
 
         let scroll_delta = context.viewport.offset as i32 - self.last_viewport_offset as i32;
 
         if scroll_delta == 0 {
             self.draw_lines(context)?;
-        } else if scroll_delta > 0 && scroll_delta < self.win_size.height as i32 {
+        } else if scroll_delta > 0 && scroll_delta < context.viewport.height as i32 {
             let lines_to_scroll = scroll_delta as u16;
             queue!(self.writer, terminal::ScrollUp(lines_to_scroll))?;
 
             self.draw_lines_range(
                 context,
-                self.win_size.height - scroll_delta as usize,
-                self.win_size.height,
+                context.viewport.height - scroll_delta as usize,
+                context.viewport.height,
             )?;
-        } else if scroll_delta < 0 && -scroll_delta < self.win_size.height as i32 {
+        } else if scroll_delta < 0 && -scroll_delta < context.viewport.height as i32 {
             let lines_to_scroll = (-scroll_delta) as u16;
             queue!(self.writer, terminal::ScrollDown(lines_to_scroll))?;
             self.draw_lines_range(context, 0, (-scroll_delta) as usize)?;
@@ -89,6 +88,8 @@ impl<W: Write> Renderer<W> {
         }
 
         self.last_viewport_offset = context.viewport.offset;
+
+        self.draw_status_bar(context)?;
 
         self.draw_cursor(context)?;
         queue!(self.writer, crossterm::cursor::Show)?;
@@ -115,7 +116,7 @@ impl<W: Write> Renderer<W> {
     }
 
     fn draw_lines(&mut self, context: &Context) -> Result<(), Box<dyn Error>> {
-        self.draw_lines_range(context, 0, self.win_size.height)
+        self.draw_lines_range(context, 0, context.viewport.height)
     }
 
     fn draw_lines_range(
@@ -124,8 +125,6 @@ impl<W: Write> Renderer<W> {
         screen_start: usize,
         screen_end: usize,
     ) -> Result<(), Box<dyn Error>> {
-        let line_num_width = (context.buffer.len() - 1).ilog10() as usize + 1;
-
         queue!(
             self.writer,
             crossterm::cursor::MoveTo(0, screen_start as u16)
@@ -136,7 +135,7 @@ impl<W: Write> Renderer<W> {
             let mut line = format!(
                 "{line_num:>width$}",
                 line_num = buffer_line,
-                width = line_num_width
+                width = self.line_num_width
             );
 
             if buffer_line < context.buffer.len() {
@@ -173,14 +172,24 @@ impl<W: Write> Renderer<W> {
         Ok(())
     }
 
-    fn draw_cursor(&mut self, context: &Context) -> Result<(), Box<dyn Error>> {
-        let line_num_width = (context.buffer.len() - 1).ilog10() as usize + 1;
-        let line_offset = line_num_width + 1;
+    fn draw_status_bar(&mut self, context: &Context) -> Result<(), Box<dyn Error>> {
+        queue!(
+            self.writer,
+            crossterm::cursor::MoveTo(0, (self.win_size.height - STATUS_BAR_HEIGHT) as u16),
+            crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
+            Print(format!("mode: {:?}", context.app_state.mode())),
+            crossterm::cursor::MoveDown(1),
+            crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
+        )?;
 
+        Ok(())
+    }
+
+    fn draw_cursor(&mut self, context: &Context) -> Result<(), Box<dyn Error>> {
         let cursor_buffer = context.cursor.pos();
         let cursor_ui = Position {
             row: cursor_buffer.row - context.viewport.offset,
-            col: line_offset + cursor_buffer.col,
+            col: self.line_num_width + 1 + cursor_buffer.col,
         };
         let cursor_style_on_crossterm = match context.cursor.style() {
             CursorStyle::Block => SetCursorStyle::SteadyBlock,
