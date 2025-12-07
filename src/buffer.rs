@@ -1,3 +1,4 @@
+use anyhow::{Context as AnyhowContext, Error, Result};
 use std::{fs::File, io::BufReader, io::prelude::*};
 
 pub struct Buffer {
@@ -5,16 +6,24 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub fn from_file(file_path: &str) -> Result<Self, std::io::Error> {
-        let f = File::open(file_path)?;
+    pub fn from_file(file_path: &str) -> Self {
+        let f = File::open(file_path)
+            .with_context(|| format!("Error Opening File"))
+            .unwrap();
+
         let buf_reader = BufReader::new(&f);
-        let mut buffer: Vec<String> = buf_reader.lines().collect::<Result<Vec<_>, _>>()?;
+
+        let mut buffer: Vec<String> = buf_reader
+            .lines()
+            .collect::<Result<Vec<_>, _>>()
+            .with_context(|| format!("Error Reading Buffer"))
+            .unwrap();
 
         if buffer.is_empty() {
             buffer.push(String::new());
         }
 
-        Ok(Self { lines: buffer })
+        Self { lines: buffer }
     }
 
     pub fn len(&self) -> usize {

@@ -3,7 +3,6 @@ use crate::{
     command_dispatcher::CmdDispatcher,
     cursor::{CursorStyle, SCROLL_HEIGHT},
     logger::Logger,
-    renderer::STATUS_BAR_HEIGHT,
     state::Mode,
 };
 use std::{
@@ -172,20 +171,24 @@ impl Command {
                             context.viewport.offset += 1;
                         }
                     }
+                    context.app_state.set_should_render(true);
                 }
                 Command::MoveCursorSOF => {
                     context.viewport.offset = 0;
                     context.cursor.set_row(0);
+                    context.app_state.set_should_render(true);
                 }
                 Command::MoveCursorEOF => {
                     context.viewport.offset = context.buffer.len() - context.viewport.height;
                     context.cursor.set_row(context.buffer.len() - 1);
+                    context.app_state.set_should_render(true);
                 }
                 Command::InsertChar(ch) => {
                     context
                         .buffer
                         .insert_char(context.cursor.row(), context.cursor.col(), *ch);
                     context.cursor.move_right(1);
+                    context.app_state.set_should_render(true);
                 }
                 Command::InsertTab => {
                     context.buffer.insert_string(
@@ -194,6 +197,7 @@ impl Command {
                         &String::from("    "),
                     );
                     context.cursor.move_right(4);
+                    context.app_state.set_should_render(true);
                 }
                 Command::RemoveChar => {
                     let cursor = &mut context.cursor;
@@ -210,6 +214,7 @@ impl Command {
                         cursor.move_up(1);
                         cursor.move_to_col(next_col);
                     }
+                    context.app_state.set_should_render(true);
                 }
                 Command::InsertNewLine => {
                     let cursor = &mut context.cursor;
@@ -224,6 +229,7 @@ impl Command {
                     buffer.insert(cursor.row() + 1, &rear);
                     cursor.move_down(1);
                     cursor.move_to_col(0);
+                    context.app_state.set_should_render(true);
                 }
                 Command::InsertEmptyLineBelow => {
                     context
@@ -233,12 +239,14 @@ impl Command {
                     context.cursor.move_to_col(0);
                     context.app_state.set_mode(Mode::Edit);
                     context.cursor.set_style(CursorStyle::Bar);
+                    context.app_state.set_should_render(true);
                 }
                 Command::InsertEmptyLineAbove => {
                     context.buffer.insert(context.cursor.row(), &String::new());
                     context.cursor.move_to_col(0);
                     context.app_state.set_mode(Mode::Edit);
                     context.cursor.set_style(CursorStyle::Bar);
+                    context.app_state.set_should_render(true);
                 }
                 Command::MoveCursorToLineEnd => {
                     context
@@ -246,6 +254,7 @@ impl Command {
                         .move_to_col(context.buffer.len_of(context.cursor.row()));
                     context.app_state.set_mode(Mode::Edit);
                     context.cursor.set_style(CursorStyle::Bar);
+                    context.app_state.set_should_render(true);
                 }
                 Command::MoveCursorToMouse { row, col } => {
                     let line_num_len = (context.buffer.len() - 1).ilog10() as usize + 1;
@@ -263,6 +272,7 @@ impl Command {
                     context
                         .cursor
                         .move_to(*row + context.viewport.offset, actual_col);
+                    context.app_state.set_should_render(true);
                 }
                 Command::ScrollUp => {
                     if context.viewport.offset > 0 {
@@ -274,6 +284,7 @@ impl Command {
                                 .move_to_col(context.buffer.len_of(context.cursor.row()));
                         }
                     }
+                    context.app_state.set_should_render(true);
                 }
                 Command::ScrollDown => {
                     if context.viewport.offset + context.viewport.height < context.buffer.len() {
@@ -285,6 +296,7 @@ impl Command {
                             .cursor
                             .move_to_col(context.buffer.len_of(context.cursor.row()));
                     }
+                    context.app_state.set_should_render(true);
                 }
                 Command::ChangeMode(mode) => {
                     context.app_state.set_mode(*mode);

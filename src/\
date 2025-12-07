@@ -28,10 +28,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    let mut editor = Application::new(BufWriter::new(stdout()), &args[1]);
-    editor.init()?;
-    editor.run()?;
-    editor.drop()?;
+    let mut editor = Application::new(BufWriter::new(stdout()), &args[1]).unwrap_or_else(|a| {});
+
+    editor.init().unwrap();
+    editor.run().unwrap();
+    editor.drop().unwrap();
 
     Logger::log(String::from("[main] Terminate App"))?;
 

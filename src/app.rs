@@ -1,11 +1,10 @@
+use anyhow::{Context as AnyhowContext, Result};
+
 use crate::{
-    buffer::Buffer,
-    cursor::Cursor,
-    input_handler::EventHandler,
-    renderer::{Renderer, STATUS_BAR_HEIGHT},
+    app, buffer::Buffer, cursor::Cursor, input_handler::EventHandler, renderer::Renderer,
     state::State,
 };
-use std::{error::Error, io::Write};
+use std::io::Write;
 
 pub struct Application<W: Write> {
     file_name: String,
@@ -18,20 +17,14 @@ pub struct Application<W: Write> {
 }
 
 impl<W: Write> Application<W> {
-    pub fn new(writer: W, file_name: &str) -> Result<Self, Box<dyn Error>> {
-        let buffer = Buffer::from_file(file_name)?;
+    pub fn new(writer: W, file_name: &str) -> Self {
+        let buffer = Buffer::from_file(file_name);
         let app_state = State::new();
         let cursor = Cursor::new();
-
         let renderer = Renderer::new(writer, file_name);
+        let viewport = Viewport::new();
 
-        let (_, win_height) = crossterm::terminal::size()?;
-        let viewport = Viewport {
-            height: (win_height as usize - STATUS_BAR_HEIGHT),
-            offset: 0,
-        };
-
-        Ok(Self {
+        Self {
             file_name: file_name.to_string(),
             buffer,
             app_state,
@@ -39,10 +32,10 @@ impl<W: Write> Application<W> {
             viewport,
             renderer,
             event_handler: EventHandler::new(),
-        })
+        }
     }
 
-    pub fn init(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn init(&mut self) -> Result<()> {
         let app_context = Context {
             cursor: &mut self.cursor,
             buffer: &mut self.buffer,
@@ -51,16 +44,18 @@ impl<W: Write> Application<W> {
             file_name: &mut self.file_name,
         };
 
-        self.renderer.init(&app_context)?;
+        self.renderer.init(&app_context);
 
         Ok(())
     }
 
-    pub fn run(&mut self) -> Result<(), Box<dyn Error>> {
+    pub fn run(&mut self) -> Result<()> {
         loop {
             if crossterm::event::poll(std::time::Duration::from_millis(10)).unwrap() {
                 let event = crossterm::event::read().unwrap();
                 let mode = self.app_state.mode();
+
+                self.app_state.set_should_render(false);
 
                 let mut app_context = Some(Context {
                     cursor: &mut self.cursor,
@@ -73,8 +68,10 @@ impl<W: Write> Application<W> {
                 let cmd = self.event_handler.handle(event, mode);
                 cmd.execute(&mut app_context);
 
-                if let Some(ref ctx) = app_context {
-                    self.renderer.render(ctx).unwrap();
+                if let Some(ref ctx) = app_context
+                    && ctx.app_state.should_render()
+                {
+                    self.renderer.render(ctx);
                 }
             }
 
@@ -86,7 +83,7 @@ impl<W: Write> Application<W> {
         Ok(())
     }
 
-    pub fn drop(&self) -> Result<(), Box<dyn Error>> {
+    pub fn drop(&self) -> Result<()> {
         crossterm::terminal::disable_raw_mode()?;
 
         Ok(())
@@ -101,7 +98,42 @@ pub struct Context<'a> {
     pub file_name: &'a mut String,
 }
 
+impl<'a> std::fmt::Display for Context<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Cursor {{ {}, {} }}, Buffer [ {} ], State {{ mode:{:?} }}, Viewport {{ offset:{}, height:{}}}",
+            self.cursor.row(),
+            self.cursor.col(),
+            self.buffer.get(self.cursor.row()),
+            self.app_state.mode(),
+            self.viewport.offset,
+            self.viewport.height,
+        )
+    }
+}
+
 pub struct Viewport {
     pub height: usize,
     pub offset: usize,
+}
+
+impl Viewport {
+    pub fn new() -> Self {
+        let (_, win_height) = crossterm::terminal::size()
+            .with_context(|| format!(""))
+            .unwrap();
+
+        Self {
+            height: win_height as usize - config::UI::STATUS_BAR_HEIGHT,
+            offset: 0,
+        }
+    }
+}
+
+pub mod config {
+    pub enum UI {}
+    impl UI {
+        pub const STATUS_BAR_HEIGHT: usize = 2;
+    }
 }
