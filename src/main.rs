@@ -1,6 +1,6 @@
 mod app;
 mod buffer;
-mod command_dispatcher;
+mod cmd_dispatcher;
 mod cursor;
 mod input_handler;
 mod logger;
@@ -17,7 +17,7 @@ use std::{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Logger::init()?;
 
-    Logger::log(String::from("[main] Start App"))?;
+    Logger::log(String::from("[main] Start App"));
 
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     editor.run()?;
     editor.drop()?;
 
-    Logger::log(String::from("[main] Terminate App"))?;
+    Logger::log(String::from("[main] Terminate App"));
 
     Ok(())
 }

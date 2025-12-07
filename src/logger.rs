@@ -53,7 +53,7 @@ impl Logger {
         Ok(())
     }
 
-    pub fn log(text: String) -> Result<(), Box<dyn Error>> {
+    pub fn log(text: String) {
         if let Some(logger) = LOGGER.get() {
             // Format the log message
             let timestamp = Self::current_time(Self::COLUMN_INTERVAL);
@@ -61,11 +61,9 @@ impl Logger {
 
             // Write to file
             let mut file = logger.file.lock().unwrap();
-            file.write_all(log_line.as_bytes())?;
-            file.flush()?;
+            file.write_all(log_line.as_bytes());
+            file.flush();
         }
-
-        Ok(())
     }
 
     fn current_time(delimiter: &str) -> String {

@@ -1,8 +1,8 @@
 use anyhow::{Context as AnyhowContext, Result};
 
 use crate::{
-    app, buffer::Buffer, cursor::Cursor, input_handler::EventHandler, renderer::Renderer,
-    state::State,
+    app, buffer::Buffer, cursor::Cursor, input_handler::EventHandler, logger::Logger,
+    renderer::Renderer, state::State,
 };
 use std::io::Write;
 
@@ -18,6 +18,7 @@ pub struct Application<W: Write> {
 
 impl<W: Write> Application<W> {
     pub fn new(writer: W, file_name: &str) -> Self {
+        Logger::log(format!("Create App"));
         let buffer = Buffer::from_file(file_name);
         let app_state = State::new();
         let cursor = Cursor::new();
@@ -36,15 +37,19 @@ impl<W: Write> Application<W> {
     }
 
     pub fn init(&mut self) -> Result<()> {
+        Logger::log(format!("Init App"));
+        let mode = self.app_state.mode();
         let app_context = Context {
             cursor: &mut self.cursor,
             buffer: &mut self.buffer,
             app_state: &mut self.app_state,
             viewport: &mut self.viewport,
             file_name: &mut self.file_name,
+            cmd_buffer: &self.event_handler.get_cmd_buffer(mode),
         };
 
         self.renderer.init(&app_context);
+        Logger::log(format!("App Initialized"));
 
         Ok(())
     }
@@ -54,6 +59,7 @@ impl<W: Write> Application<W> {
             if crossterm::event::poll(std::time::Duration::from_millis(10)).unwrap() {
                 let event = crossterm::event::read().unwrap();
                 let mode = self.app_state.mode();
+                let cmd_buffer = self.event_handler.get_cmd_buffer(mode);
 
                 self.app_state.set_should_render(false);
 
@@ -63,6 +69,7 @@ impl<W: Write> Application<W> {
                     app_state: &mut self.app_state,
                     viewport: &mut self.viewport,
                     file_name: &mut self.file_name,
+                    cmd_buffer: &cmd_buffer,
                 });
 
                 let cmd = self.event_handler.handle(event, mode);
@@ -71,6 +78,7 @@ impl<W: Write> Application<W> {
                 if let Some(ref ctx) = app_context
                     && ctx.app_state.should_render()
                 {
+                    Logger::log(format!("Render!"));
                     self.renderer.render(ctx);
                 }
             }
@@ -96,6 +104,7 @@ pub struct Context<'a> {
     pub app_state: &'a mut State,
     pub viewport: &'a mut Viewport,
     pub file_name: &'a mut String,
+    pub cmd_buffer: &'a String,
 }
 
 impl<'a> std::fmt::Display for Context<'a> {

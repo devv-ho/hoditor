@@ -3,12 +3,13 @@ use crate::{
     cursor::{CursorStyle, Position},
     logger::Logger,
 };
-use anyhow::{Context as AnyhowContext, Error, Result};
+use anyhow::Context as AnyhowContext;
 use crossterm::{
-    cursor::SetCursorStyle,
+    cursor::{self, SetCursorStyle},
+    event::EnableMouseCapture,
     execute, queue,
-    style::{Print, SetBackgroundColor, SetForegroundColor},
-    terminal,
+    style::{self, Print, SetBackgroundColor, SetForegroundColor},
+    terminal::{self, Clear, ClearType},
 };
 use std::io::Write;
 
@@ -53,25 +54,31 @@ impl<W: Write> Renderer<W> {
     }
 
     pub fn init(&mut self, context: &Context) {
-        crossterm::terminal::enable_raw_mode()
+        Logger::log(format!("Renderer Init 1"));
+        terminal::enable_raw_mode()
             .with_context(|| format!("Error While Enabling Raw Mode"))
             .unwrap();
-        crossterm::execute!(self.writer, crossterm::event::EnableMouseCapture)
+        Logger::log(format!("Renderer Init 2"));
+        execute!(self.writer, EnableMouseCapture)
             .with_context(|| format!("Error while Enabling Mouse Capture"))
             .unwrap();
-        crossterm::execute!(self.writer, crossterm::terminal::EnterAlternateScreen)
+        Logger::log(format!("Renderer Init 3"));
+        execute!(self.writer, terminal::EnterAlternateScreen)
             .with_context(|| format!("Error While Entering AlternateScreen"))
             .unwrap();
+        Logger::log(format!("Renderer Init 4"));
 
         self.set_bg_color();
+        Logger::log(format!("Renderer Init 5"));
         self.line_num_width = (context.buffer.len() - 1).ilog10() as usize + 1;
 
         self.render(context);
+        Logger::log(format!("Renderer Init 6"));
     }
 
     pub fn render(&mut self, context: &Context) {
         Logger::log(format!("Render Start"));
-        queue!(self.writer, crossterm::cursor::Hide)
+        queue!(self.writer, cursor::Hide)
             .with_context(|| format!("Error While Hiding Cursor"))
             .unwrap();
 
@@ -107,7 +114,7 @@ impl<W: Write> Renderer<W> {
         self.draw_status_bar(context);
 
         self.draw_cursor(context);
-        queue!(self.writer, crossterm::cursor::Show)
+        queue!(self.writer, cursor::Show)
             .with_context(|| format!("Error While Showing Cursor"))
             .unwrap();
 
@@ -118,7 +125,7 @@ impl<W: Write> Renderer<W> {
     }
 
     fn set_bg_color(&mut self) {
-        let tokyonight_bg = crossterm::style::Color::Rgb {
+        let tokyonight_bg = style::Color::Rgb {
             r: 0x1a,
             g: 0x1b,
             b: 0x26,
@@ -127,7 +134,7 @@ impl<W: Write> Renderer<W> {
         execute!(
             self.writer,
             SetBackgroundColor(tokyonight_bg),
-            terminal::Clear(terminal::ClearType::All)
+            Clear(ClearType::All)
         )
         .with_context(|| format!("Error While Setting BG Color"))
         .unwrap();
@@ -138,26 +145,27 @@ impl<W: Write> Renderer<W> {
     }
 
     fn draw_lines_range(&mut self, context: &Context, screen_start: usize, screen_end: usize) {
-        queue!(
-            self.writer,
-            crossterm::cursor::MoveTo(0, screen_start as u16)
-        )
-        .with_context(|| format!("Error While Queuing Cursor Move. {context}"))
-        .unwrap();
+        Logger::log(format!("Draw Lines Range 1"));
+        queue!(self.writer, cursor::MoveTo(0, screen_start as u16))
+            .with_context(|| format!("Error While Queuing Cursor Move. {context}"))
+            .unwrap();
 
+        Logger::log(format!("Draw Lines Range 2"));
         for screen_row in screen_start..screen_end {
             let buffer_line = context.viewport.offset + screen_row;
-            let line = format!(
+            let mut line = format!(
                 "{line_num:>width$}",
                 line_num = buffer_line,
                 width = self.line_num_width
             );
 
-            let line = line + " " + context.buffer.get(buffer_line);
+            if buffer_line < context.buffer.len() {
+                line = line + " " + context.buffer.get(buffer_line);
+            }
 
             queue!(
                 self.writer,
-                terminal::Clear(terminal::ClearType::CurrentLine),
+                Clear(terminal::ClearType::CurrentLine),
                 Print(&line)
             )
             .with_context(|| {
@@ -170,8 +178,8 @@ impl<W: Write> Renderer<W> {
 
             queue!(
                 self.writer,
-                crossterm::cursor::MoveDown(1),
-                crossterm::cursor::MoveToColumn(0)
+                cursor::MoveDown(1),
+                cursor::MoveToColumn(0)
             ).with_context(||
                 format!(
                     "Error While Moving Cursor To Next Line. screen_row:{}, buffer_row:{}, line:{}, Context:{}",
@@ -182,16 +190,19 @@ impl<W: Write> Renderer<W> {
             )
             .unwrap();
         }
+        Logger::log(format!("Draw Lines Range 3"));
     }
 
     fn draw_status_bar(&mut self, context: &Context) {
         queue!(
             self.writer,
-            crossterm::cursor::MoveTo(0, (self.win_size.height - STATUS_BAR_HEIGHT) as u16),
-            crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
+            cursor::MoveTo(0, (self.win_size.height - STATUS_BAR_HEIGHT) as u16),
+            Clear(ClearType::CurrentLine),
             Print(format!("mode: {:?}", context.app_state.mode())),
-            crossterm::cursor::MoveDown(1),
-            crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine),
+            cursor::MoveDown(1),
+            cursor::MoveToColumn(0),
+            Clear(ClearType::CurrentLine),
+            Print(context.cmd_buffer),
         )
         .with_context(|| format!("Error While Drawing Status Bar"))
         .unwrap();
@@ -208,10 +219,10 @@ impl<W: Write> Renderer<W> {
             CursorStyle::Bar => SetCursorStyle::SteadyBar,
         };
 
-        Logger::log(format!("{:?}", cursor_ui)).ok();
+        Logger::log(format!("{:?}", cursor_ui));
         queue!(
             self.writer,
-            crossterm::cursor::MoveTo(cursor_ui.col as u16, cursor_ui.row as u16),
+            cursor::MoveTo(cursor_ui.col as u16, cursor_ui.row as u16),
             cursor_style_on_crossterm,
         )
         .with_context(|| format!("Error While Drawing Cursor. Context:{context}"))

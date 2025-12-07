@@ -1,6 +1,7 @@
 use crate::{
     app::Context,
-    command_dispatcher::CmdDispatcher,
+    buffer::Buffer,
+    cmd_dispatcher::{self, CmdDispatcher},
     cursor::{CursorStyle, SCROLL_HEIGHT},
     logger::Logger,
     state::Mode,
@@ -16,36 +17,56 @@ use std::{
 use crossterm::event::{Event, KeyCode, MouseEventKind};
 
 pub struct EventHandler {
-    dispatcher: CmdDispatcher,
+    normal_dispatcher: CmdDispatcher,
+    cmd_dispatcher: CmdDispatcher,
 }
 
 impl EventHandler {
     pub fn new() -> Self {
-        let mut dispatcher = CmdDispatcher::new();
-        dispatcher.register("h", Command::MoveCursor { dx: -1, dy: 0 });
-        dispatcher.register("j", Command::MoveCursor { dx: 0, dy: 1 });
-        dispatcher.register("k", Command::MoveCursor { dx: 0, dy: -1 });
-        dispatcher.register("l", Command::MoveCursor { dx: 1, dy: 0 });
-        dispatcher.register("gg", Command::MoveCursorSOF);
-        dispatcher.register("G", Command::MoveCursorEOF);
-        dispatcher.register("i", Command::ChangeMode(Mode::Edit));
-        dispatcher.register("w", Command::Save);
-        dispatcher.register("W", Command::SaveAndRestart);
-        dispatcher.register("o", Command::InsertEmptyLineBelow);
-        dispatcher.register("O", Command::InsertEmptyLineAbove);
-        dispatcher.register("A", Command::MoveCursorToLineEnd);
-        dispatcher.register(":", Command::ChangeMode(Mode::Cmd));
+        Logger::log(format!("Event Handler Create"));
 
-        Self { dispatcher }
+        let mut normal_dispatcher = CmdDispatcher::new();
+        normal_dispatcher.register("h", Command::MoveCursor { dx: -1, dy: 0 });
+        normal_dispatcher.register("j", Command::MoveCursor { dx: 0, dy: 1 });
+        normal_dispatcher.register("k", Command::MoveCursor { dx: 0, dy: -1 });
+        normal_dispatcher.register("l", Command::MoveCursor { dx: 1, dy: 0 });
+        normal_dispatcher.register("gg", Command::MoveCursorSOF);
+        normal_dispatcher.register("G", Command::MoveCursorEOF);
+        normal_dispatcher.register("i", Command::ChangeMode(Mode::Edit));
+        normal_dispatcher.register("o", Command::InsertEmptyLineBelow);
+        normal_dispatcher.register("O", Command::InsertEmptyLineAbove);
+        normal_dispatcher.register("A", Command::MoveCursorToLineEnd);
+        normal_dispatcher.register(":", Command::ChangeMode(Mode::Cmd));
+
+        let mut cmd_dispatcher = CmdDispatcher::new();
+        cmd_dispatcher.register("e", Command::OpenFile(String::new()));
+        cmd_dispatcher.register("w", Command::Save);
+        cmd_dispatcher.register("W", Command::SaveAndRestart);
+        cmd_dispatcher.register("q", Command::TerminateApp);
+
+        Logger::log(format!("Event Handler Created"));
+
+        Self {
+            normal_dispatcher,
+            cmd_dispatcher,
+        }
+    }
+
+    pub fn get_cmd_buffer(&self, mode: Mode) -> String {
+        match mode {
+            Mode::Cmd => self.cmd_dispatcher.get_query(),
+            Mode::Normal => self.normal_dispatcher.get_query(),
+            Mode::Edit => String::new(),
+        }
     }
 
     pub fn handle(&mut self, event: Event, mode: Mode) -> Command {
-        Logger::log(format!("Event: {:?}", event)).unwrap();
+        Logger::log(format!("Event: {:?}", event));
 
         match mode {
             Mode::Edit => Self::handle_edit_event(event),
             Mode::Normal => self.handle_normal_event(event),
-            Mode::Cmd => Self::handle_cmd_event(event),
+            Mode::Cmd => self.handle_cmd_event(event),
         }
     }
 
@@ -80,8 +101,8 @@ impl EventHandler {
         match event {
             Event::Key(key) => match key.code {
                 KeyCode::Char(ch) => {
-                    self.dispatcher.push(ch);
-                    self.dispatcher.get().unwrap_or(Command::DoNothing)
+                    self.normal_dispatcher.push(ch);
+                    self.normal_dispatcher.get().unwrap_or(Command::DoNothing)
                 }
                 KeyCode::Esc => Command::TerminateApp,
                 _ => Command::DoNothing,
@@ -99,10 +120,16 @@ impl EventHandler {
         }
     }
 
-    fn handle_cmd_event(event: Event) -> Command {
+    fn handle_cmd_event(&mut self, event: Event) -> Command {
         match event {
             Event::Key(key) => match key.code {
+                KeyCode::Char(ch) => {
+                    self.cmd_dispatcher.push(ch);
+                    Command::DoNothing
+                }
+                KeyCode::Enter => self.cmd_dispatcher.get().unwrap_or(Command::DoNothing),
                 KeyCode::Esc => Command::ChangeMode(Mode::Normal),
+
                 _ => Command::DoNothing,
             },
             _ => Command::DoNothing,
@@ -130,6 +157,8 @@ pub enum Command {
     TerminateApp,
     Save,
     SaveAndRestart,
+    OpenFile(String),
+    Undo,
 }
 
 impl Command {
@@ -304,6 +333,7 @@ impl Command {
                         Mode::Cmd | Mode::Normal => context.cursor.set_style(CursorStyle::Block),
                         Mode::Edit => context.cursor.set_style(CursorStyle::Bar),
                     }
+                    context.app_state.set_should_render(true);
                 }
                 Command::TerminateApp => {
                     context.app_state.terminate_app();
@@ -357,6 +387,18 @@ impl Command {
                     let exe = &args[0];
                     let err = ProcessCommand::new(exe).args(&args[1..]).exec();
                     panic!("Failed to restart: {}", err);
+                }
+                Command::OpenFile(file) => {
+                    Logger::log(format!("{file}"));
+                    context.file_name.clear();
+                    context.file_name.push_str(file);
+                    context.buffer.replace(file);
+                    context.cursor.move_to(0, 0);
+                    context.viewport.offset = 0;
+                    context.app_state.set_should_render(true);
+                    context.app_state.set_mode(Mode::Normal);
+                }
+                Command::Undo => {
                 }
             }
         }
