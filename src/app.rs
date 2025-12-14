@@ -1,8 +1,8 @@
 use anyhow::{Context as AnyhowContext, Result};
 
 use crate::{
-    app, buffer::Buffer, cursor::Cursor, input_handler::EventHandler, logger::Logger,
-    renderer::Renderer, state::State,
+    app, buffer::Buffer, cursor::Cursor, input_handler::EventHandler, log, renderer::Renderer,
+    state::State,
 };
 use std::io::Write;
 
@@ -18,7 +18,7 @@ pub struct Application<W: Write> {
 
 impl<W: Write> Application<W> {
     pub fn new(writer: W, file_name: &str) -> Self {
-        Logger::log(format!("Create App"));
+        log!("Create App");
         let buffer = Buffer::from_file(file_name);
         let app_state = State::new();
         let cursor = Cursor::new();
@@ -37,7 +37,7 @@ impl<W: Write> Application<W> {
     }
 
     pub fn init(&mut self) -> Result<()> {
-        Logger::log(format!("Init App"));
+        log!("Init App");
         let mode = self.app_state.mode();
         let app_context = Context {
             cursor: &mut self.cursor,
@@ -49,7 +49,7 @@ impl<W: Write> Application<W> {
         };
 
         self.renderer.init(&app_context);
-        Logger::log(format!("App Initialized"));
+        log!("App Initialized");
 
         Ok(())
     }
@@ -78,7 +78,7 @@ impl<W: Write> Application<W> {
                 if let Some(ref ctx) = app_context
                     && ctx.app_state.should_render()
                 {
-                    Logger::log(format!("Render!"));
+                    log!("Render!");
                     self.renderer.render(ctx);
                 }
             }

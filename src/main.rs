@@ -17,12 +17,12 @@ use std::{
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     Logger::init()?;
 
-    Logger::log(String::from("[main] Start App"));
+    log!("[main] Start App");
 
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         panic!(
-            "[main] Argument len should be 2. {{ len:{}, args:{:?}}}",
+            "[main] Argument len should be 2. {{ len:{}, args:{:?} }}",
             args.len(),
             args
         );
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     editor.run()?;
     editor.drop()?;
 
-    Logger::log(String::from("[main] Terminate App"));
+    log!("[main] Terminate App");
 
     Ok(())
 }
