@@ -2,7 +2,7 @@ use crate::{
     app::Context,
     buffer::Buffer,
     cmd_dispatcher::{self, CmdDispatcher},
-    cursor::{CursorStyle, SCROLL_HEIGHT},
+    cursor::CursorStyle,
     log,
     state::Mode,
 };
@@ -195,14 +195,6 @@ impl Command {
                         if cursor.col() > buffer.len_of(cursor.row()) {
                             cursor.set_col(buffer.len_of(cursor.row()));
                         }
-
-                        if cursor.row() < context.viewport.offset + SCROLL_HEIGHT {
-                            context.viewport.offset = if cursor.row() < SCROLL_HEIGHT {
-                                0
-                            } else {
-                                cursor.row() - SCROLL_HEIGHT
-                            };
-                        }
                     } else {
                         let mut clamped_dy = *dy;
                         if cursor.row() as i32 + *dy >= buffer.len() as i32 {
@@ -213,18 +205,10 @@ impl Command {
                         if cursor.col() > buffer.len_of(cursor.row()) {
                             cursor.set_col(buffer.len_of(cursor.row()));
                         }
-
-                        if cursor.row()
-                            >= context.viewport.offset + context.viewport.height - SCROLL_HEIGHT
-                        {
-                            context.viewport.offset =
-                                if cursor.row() + SCROLL_HEIGHT >= buffer.len() {
-                                    buffer.len() - context.viewport.height
-                                } else {
-                                    cursor.row() + SCROLL_HEIGHT - context.viewport.height
-                                };
-                        }
                     }
+
+                    context.viewport.update(cursor.row(), buffer.len());
+
                     context.app_state.set_should_render(true);
                 }
                 Command::MoveCursorSOF => {

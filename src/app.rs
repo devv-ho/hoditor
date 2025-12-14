@@ -138,11 +138,38 @@ impl Viewport {
             offset: 0,
         }
     }
+
+    pub fn update(&mut self, cursor_row: usize, eof: usize) {
+        log!(
+            "[VP][update] offset:{}, height:{}, curosr_row:{}, eof:{}",
+            self.offset,
+            self.height,
+            cursor_row,
+            eof
+        );
+
+        self.offset = if cursor_row < self.offset + config::UI::SCROLL_HEIGHT {
+            if cursor_row < config::UI::SCROLL_HEIGHT {
+                0
+            } else {
+                cursor_row - config::UI::SCROLL_HEIGHT
+            }
+        } else if cursor_row >= self.offset + self.height - config::UI::SCROLL_HEIGHT {
+            if cursor_row + config::UI::SCROLL_HEIGHT >= eof {
+                eof - self.height
+            } else {
+                cursor_row + config::UI::SCROLL_HEIGHT - self.height
+            }
+        } else {
+            self.offset
+        }
+    }
 }
 
 pub mod config {
     pub enum UI {}
     impl UI {
         pub const STATUS_BAR_HEIGHT: usize = 2;
+        pub const SCROLL_HEIGHT: usize = 15;
     }
 }
