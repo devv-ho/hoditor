@@ -348,8 +348,11 @@ impl Command {
                         buf_writer.write_all(b"\n").unwrap();
                     }
                     buf_writer.flush().unwrap();
+                    context.app_state.set_mode(Mode::Normal);
+                    context.app_state.set_should_render(true);
                 }
                 Command::SaveAndRestart => {
+
                     // Save the file first
                     let f_write = File::create(&context.file_name).unwrap();
                     let mut buf_writer = BufWriter::new(f_write);
