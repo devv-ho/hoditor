@@ -2,8 +2,8 @@ use crate::{
     app::Context,
     buffer::Buffer,
     cmd_dispatcher::{self, CmdDispatcher},
-    cursor::{CursorStyle, SCROLL_HEIGHT},
-    logger::Logger,
+    cursor::CursorStyle,
+    log,
     state::Mode,
 };
 use std::{
@@ -23,8 +23,6 @@ pub struct EventHandler {
 
 impl EventHandler {
     pub fn new() -> Self {
-        Logger::log(format!("Event Handler Create"));
-
         let mut normal_dispatcher = CmdDispatcher::new();
         normal_dispatcher.register("h", Command::MoveCursor { dx: -1, dy: 0 });
         normal_dispatcher.register("j", Command::MoveCursor { dx: 0, dy: 1 });
@@ -44,7 +42,7 @@ impl EventHandler {
         cmd_dispatcher.register("W", Command::SaveAndRestart);
         cmd_dispatcher.register("q", Command::TerminateApp);
 
-        Logger::log(format!("Event Handler Created"));
+        log!("Event Handler Created");
 
         Self {
             normal_dispatcher,
@@ -61,7 +59,7 @@ impl EventHandler {
     }
 
     pub fn handle(&mut self, event: Event, mode: Mode) -> Command {
-        Logger::log(format!("Event: {:?}", event));
+        log!("Event: {:?}", event);
 
         match mode {
             Mode::Edit => Self::handle_edit_event(event),
@@ -171,45 +169,62 @@ impl Command {
                     let buffer = &mut context.buffer;
 
                     // Handle horizontal movement
-                    if *dx < 0 && cursor.col() > 0 {
-                        cursor.move_left(dx.abs() as usize);
-                    } else if *dx > 0 && cursor.col() < buffer.len_of(cursor.row()) {
-                        cursor.move_right(*dx as usize);
+                    if *dx < 0 {
+                        let mut clamped_dx = *dx;
+                        if clamped_dx.abs() > cursor.col() as i32 {
+                            clamped_dx = -1 * cursor.col() as i32;
+                        }
+                        cursor.move_left(clamped_dx.abs() as usize);
+                    } else if *dx > 0 {
+                        let mut clamped_dx = *dx;
+                        if cursor.col() as i32 + clamped_dx > buffer.len_of(cursor.row()) as i32 {
+                            clamped_dx = buffer.len_of(cursor.row()) as i32 - cursor.col() as i32;
+                        }
+
+                        cursor.move_right(clamped_dx as usize);
                     }
 
                     // Handle vertical movement
-                    if *dy < 0 && cursor.row() > 0 {
-                        cursor.move_up(dy.abs() as usize);
+                    if *dy < 0 {
+                        let mut clamped_dy = *dy;
+                        if dy.abs() as usize > cursor.row() {
+                            clamped_dy = -1 * cursor.row() as i32;
+                        }
+
+                        cursor.move_up(clamped_dy.abs() as usize);
                         if cursor.col() > buffer.len_of(cursor.row()) {
                             cursor.set_col(buffer.len_of(cursor.row()));
                         }
-                        if cursor.row() < context.viewport.offset + SCROLL_HEIGHT
-                            && context.viewport.offset > 0
-                        {
-                            context.viewport.offset -= 1;
+                    } else {
+                        let mut clamped_dy = *dy;
+                        if cursor.row() as i32 + *dy >= buffer.len() as i32 {
+                            clamped_dy = buffer.len() as i32 - cursor.row() as i32 - 1;
                         }
-                    } else if *dy > 0 && cursor.row() < buffer.len() - 1 {
-                        cursor.move_down(*dy as usize);
+
+                        cursor.move_down(clamped_dy as usize);
                         if cursor.col() > buffer.len_of(cursor.row()) {
                             cursor.set_col(buffer.len_of(cursor.row()));
-                        }
-                        if cursor.row()
-                            >= context.viewport.offset + context.viewport.height - SCROLL_HEIGHT
-                            && context.viewport.offset + context.viewport.height < buffer.len()
-                        {
-                            context.viewport.offset += 1;
                         }
                     }
+
+                    context.viewport.update(cursor.row(), buffer.len());
+
                     context.app_state.set_should_render(true);
                 }
                 Command::MoveCursorSOF => {
                     context.viewport.offset = 0;
                     context.cursor.set_row(0);
+                    context
+                        .cursor
+                        .set_col(context.buffer.len_of(context.cursor.row()));
                     context.app_state.set_should_render(true);
                 }
                 Command::MoveCursorEOF => {
                     context.viewport.offset = context.buffer.len() - context.viewport.height;
                     context.cursor.set_row(context.buffer.len() - 1);
+                    context
+                        .cursor
+                        .set_col(context.buffer.len_of(context.cursor.row()));
                     context.app_state.set_should_render(true);
                 }
                 Command::InsertChar(ch) => {
@@ -352,7 +367,6 @@ impl Command {
                     context.app_state.set_should_render(true);
                 }
                 Command::SaveAndRestart => {
-
                     // Save the file first
                     let f_write = File::create(&context.file_name).unwrap();
                     let mut buf_writer = BufWriter::new(f_write);
@@ -392,7 +406,7 @@ impl Command {
                     panic!("Failed to restart: {}", err);
                 }
                 Command::OpenFile(file) => {
-                    Logger::log(format!("{file}"));
+                    log!("{file}");
                     context.file_name.clear();
                     context.file_name.push_str(file);
                     context.buffer.replace(file);
@@ -401,8 +415,7 @@ impl Command {
                     context.app_state.set_should_render(true);
                     context.app_state.set_mode(Mode::Normal);
                 }
-                Command::Undo => {
-                }
+                Command::Undo => {}
             }
         }
     }

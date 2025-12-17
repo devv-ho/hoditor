@@ -16,7 +16,6 @@ pub struct Cursor {
     style: CursorStyle,
 }
 
-pub const SCROLL_HEIGHT: usize = 15;
 impl Cursor {
     pub fn new() -> Self {
         Self {

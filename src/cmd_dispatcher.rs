@@ -1,4 +1,4 @@
-use crate::{input_handler::Command, logger::Logger};
+use crate::{input_handler::Command, log};
 use std::collections::HashMap;
 
 pub struct CmdDispatcher {
@@ -23,12 +23,43 @@ impl CmdDispatcher {
     }
 
     pub fn get(&mut self) -> Option<Command> {
+        log!("[CD][get] query:{{ {} }}", self.query);
         let query = self.query.clone();
         let query: Vec<_> = query.split(' ').collect();
         let cmd = query[0].to_string();
-        Logger::log(format!("cmd: {}, query:{{{:?}}}", &cmd, &query));
+
+        let mut digits_end = 0;
+        for (i, ch) in cmd.char_indices() {
+            if !ch.is_ascii_digit() {
+                break;
+            }
+            digits_end = i + 1;
+        }
+
+        let (digits, cmd) = if digits_end > 0 {
+            cmd.split_at(digits_end)
+        } else {
+            ("1", cmd.as_str())
+        };
+
+        log!(
+            "[CD][get] digits_end:{}, digits:{}, cmd:{}",
+            digits_end,
+            &digits,
+            &cmd
+        );
+
+        if cmd.is_empty() {
+            log!("Cmd Not Completed");
+            return Some(Command::DoNothing);
+        }
+
+        let digits = digits.parse::<usize>().unwrap();
+
+        log!("cmd: {}, query:{{{:?}}}", &cmd, &query);
+
         let result = self.root.find(&cmd);
-        Logger::log(format!("{:?}", result));
+        log!("{:?}", result);
         match result {
             CmdFindResult::Invalid => {
                 self.clear();
@@ -37,10 +68,13 @@ impl CmdDispatcher {
             CmdFindResult::Incomplete => None,
             CmdFindResult::Complete(cmd) => {
                 self.clear();
-                if matches!(cmd, Command::OpenFile(_)) {
-                    Some(Command::OpenFile(query[1].to_string()))
-                } else {
-                    Some(cmd)
+                match cmd {
+                    Command::OpenFile(_) => Some(Command::OpenFile(query[1].to_string())),
+                    Command::MoveCursor { dx, dy } => Some(Command::MoveCursor {
+                        dx: dx * digits as i32,
+                        dy: dy * digits as i32,
+                    }),
+                    _ => Some(cmd),
                 }
             }
         }
@@ -77,7 +111,7 @@ impl CmdNode {
     }
 
     fn find(&self, query: &str) -> CmdFindResult {
-        Logger::log(format!("{query}"));
+        log!("{query}");
         if query == "" {
             return CmdFindResult::Invalid;
         }
@@ -91,7 +125,7 @@ impl CmdNode {
             }
         }
 
-        Logger::log(format!("{:?}", node.cmd));
+        log!("{:?}", node.cmd);
 
         match node.cmd.clone() {
             Some(cmd) => CmdFindResult::Complete(cmd),

@@ -1,7 +1,7 @@
 use crate::{
     app::Context,
     cursor::{CursorStyle, Position},
-    logger::Logger,
+    log,
 };
 use anyhow::Context as AnyhowContext;
 use crossterm::{
@@ -54,41 +54,35 @@ impl<W: Write> Renderer<W> {
     }
 
     pub fn init(&mut self, context: &Context) {
-        Logger::log(format!("Renderer Init 1"));
         terminal::enable_raw_mode()
             .with_context(|| format!("Error While Enabling Raw Mode"))
             .unwrap();
-        Logger::log(format!("Renderer Init 2"));
         execute!(self.writer, EnableMouseCapture)
             .with_context(|| format!("Error while Enabling Mouse Capture"))
             .unwrap();
-        Logger::log(format!("Renderer Init 3"));
         execute!(self.writer, terminal::EnterAlternateScreen)
             .with_context(|| format!("Error While Entering AlternateScreen"))
             .unwrap();
-        Logger::log(format!("Renderer Init 4"));
 
         self.set_bg_color();
-        Logger::log(format!("Renderer Init 5"));
         self.line_num_width = (context.buffer.len() - 1).ilog10() as usize + 1;
 
         self.render(context);
-        Logger::log(format!("Renderer Init 6"));
     }
 
     pub fn render(&mut self, context: &Context) {
-        Logger::log(format!("Render Start"));
+        log!("Render Start");
         queue!(self.writer, cursor::Hide)
             .with_context(|| format!("Error While Hiding Cursor"))
             .unwrap();
 
         let scroll_delta = context.viewport.offset as i32 - self.last_viewport_offset as i32;
 
-        Logger::log(format!("scroll : {scroll_delta}"));
+        log!("scroll : {scroll_delta}");
         if scroll_delta == 0 {
             self.draw_lines(context);
         } else if scroll_delta > 0 && scroll_delta < context.viewport.height as i32 {
-            Logger::log(format!("Scroll Up"));
+            log!("Scroll Up");
             let lines_to_scroll = scroll_delta as u16;
             queue!(self.writer, terminal::ScrollUp(lines_to_scroll))
                 .with_context(|| format!("Error While Scrolling Up"))
@@ -145,12 +139,12 @@ impl<W: Write> Renderer<W> {
     }
 
     fn draw_lines_range(&mut self, context: &Context, screen_start: usize, screen_end: usize) {
-        Logger::log(format!("Draw Lines Range 1"));
+        log!("Draw Lines Range 1");
         queue!(self.writer, cursor::MoveTo(0, screen_start as u16))
             .with_context(|| format!("Error While Queuing Cursor Move. {context}"))
             .unwrap();
 
-        Logger::log(format!("Draw Lines Range 2"));
+        log!("Draw Lines Range 2");
         for screen_row in screen_start..screen_end {
             let buffer_line = context.viewport.offset + screen_row;
             let mut line = format!(
@@ -190,7 +184,7 @@ impl<W: Write> Renderer<W> {
             )
             .unwrap();
         }
-        Logger::log(format!("Draw Lines Range 3"));
+        log!("Draw Lines Range 3");
     }
 
     fn draw_status_bar(&mut self, context: &Context) {
@@ -219,7 +213,7 @@ impl<W: Write> Renderer<W> {
             CursorStyle::Bar => SetCursorStyle::SteadyBar,
         };
 
-        Logger::log(format!("{:?}", cursor_ui));
+        log!("{:?}", cursor_ui);
         queue!(
             self.writer,
             cursor::MoveTo(cursor_ui.col as u16, cursor_ui.row as u16),

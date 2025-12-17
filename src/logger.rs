@@ -9,6 +9,13 @@ use std::{
 
 static LOGGER: OnceLock<Logger> = OnceLock::new();
 
+#[macro_export]
+macro_rules! log {
+    ($($arg:tt)*) => {{
+        $crate::Logger::log(format_args!($($arg)*));
+    }};
+}
+
 pub struct Logger {
     pub file: Mutex<File>,
 }
@@ -53,11 +60,16 @@ impl Logger {
         Ok(())
     }
 
-    pub fn log(text: String) {
+    pub fn log(args: std::fmt::Arguments) {
         if let Some(logger) = LOGGER.get() {
             // Format the log message
             let timestamp = Self::current_time(Self::COLUMN_INTERVAL);
-            let log_line = format!("{}{}{}\n", timestamp, Self::COLUMN_INTERVAL, text);
+            let log_line = format!(
+                "{}{}{}\n",
+                timestamp,
+                Self::COLUMN_INTERVAL,
+                format!("{}", args)
+            );
 
             // Write to file
             let mut file = logger.file.lock().unwrap();
